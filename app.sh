@@ -15,6 +15,9 @@ WORKER_PID="$RUN_DIR/worker.pid"
 API_LOG="$LOG_DIR/api.log"
 WORKER_LOG="$LOG_DIR/worker.log"
 
+# Go 可执行文件，服务器可通过 backend/.env 设置 GO_BIN
+GO_BIN="${GO_BIN:-go}"
+
 load_env() {
   if [[ -f "$ENV_FILE" ]]; then
     set -a
@@ -22,6 +25,7 @@ load_env() {
     source "$ENV_FILE"
     set +a
   fi
+  GO_BIN="${GO_BIN:-go}"
 }
 
 ensure_dirs() {
@@ -92,11 +96,16 @@ stop_proc() {
 }
 
 build() {
-  echo "[build] compiling..."
+  if [[ ! -x "$GO_BIN" ]] && ! command -v "$GO_BIN" &>/dev/null; then
+    echo "[build] go not found: $GO_BIN" >&2
+    exit 1
+  fi
+
+  echo "[build] compiling with $GO_BIN..."
   cd "$BACKEND_DIR"
-  go mod tidy
-  go build -o "$API_BIN" ./cmd/api
-  go build -o "$WORKER_BIN" ./cmd/video-worker
+  "$GO_BIN" mod tidy
+  "$GO_BIN" build -o "$API_BIN" ./cmd/api
+  "$GO_BIN" build -o "$WORKER_BIN" ./cmd/video-worker
   echo "[build] done: $API_BIN, $WORKER_BIN"
 }
 
