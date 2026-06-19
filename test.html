@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Video Manager HLS 测试播放</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1115;
+      --panel: #171a21;
+      --border: #2a3140;
+      --text: #e8ecf3;
+      --muted: #8b95a7;
+      --accent: #4f8cff;
+      --danger: #ff6b6b;
+      --ok: #3ddc84;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    .wrap {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 24px 16px 48px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 1.5rem;
+      font-weight: 600;
+    }
+
+    .sub {
+      margin: 0 0 24px;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .player-box {
+      background: #000;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      aspect-ratio: 16 / 9;
+      margin-bottom: 20px;
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: #000;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+
+    .panel h2 {
+      margin: 0 0 12px;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 12px;
+      font-size: 0.875rem;
+      color: var(--muted);
+    }
+
+    input, textarea {
+      width: 100%;
+      margin-top: 6px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--text);
+      font: inherit;
+    }
+
+    textarea {
+      min-height: 72px;
+      resize: vertical;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.8rem;
+    }
+
+    .row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 16px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      background: var(--accent);
+      color: #fff;
+    }
+
+    button.secondary {
+      background: #2a3140;
+      color: var(--text);
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .status {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      font-size: 0.875rem;
+      word-break: break-all;
+    }
+
+    .status.ok { border-color: rgba(61, 220, 132, 0.35); color: var(--ok); }
+    .status.err { border-color: rgba(255, 107, 107, 0.35); color: var(--danger); }
+
+    .log {
+      margin: 0;
+      padding: 12px;
+      max-height: 180px;
+      overflow: auto;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.75rem;
+      color: var(--muted);
+      white-space: pre-wrap;
+    }
+
+    .hint {
+      margin-top: 8px;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>HLS 播放测试</h1>
+    <p class="sub">使用 <a href="https://github.com/video-dev/hls.js/" target="_blank" rel="noreferrer">hls.js</a>（CDN）播放 Video Manager 转码后的 fMP4 切片流。</p>
+
+    <div class="player-box">
+      <video id="player" controls playsinline></video>
+    </div>
+
+    <div class="panel">
+      <h2>方式一：通过 Play API 获取 m3u8</h2>
+      <label>
+        API 地址
+        <input id="apiBase" type="url" value="https://video-api.zood.work" />
+      </label>
+      <label>
+        Video ID
+        <input id="videoId" type="text" value="83344678-fa0a-43d9-9a76-011e5b4bebc6" placeholder="uuid" />
+      </label>
+      <label>
+        Token（tencentToken 或 Supabase access_token）
+        <textarea id="token" placeholder="Bearer token，不含 Bearer 前缀"></textarea>
+      </label>
+      <div class="row">
+        <button id="btnPlayApi">获取 playUrl 并播放</button>
+        <button id="btnStop" class="secondary" type="button">停止</button>
+      </div>
+      <p class="hint">请求 <code>GET /api/videos/{id}/play?token=...</code>，返回 COS 上的 <code>_play.m3u8</code> 预签名地址。</p>
+    </div>
+
+    <div class="panel">
+      <h2>方式二：直接播放 m3u8 地址</h2>
+      <label>
+        m3u8 URL（playUrl 或任意可访问的 playlist）
+        <input id="m3u8Url" type="url" placeholder="https://workspace.zood.work/videos/.../_play.m3u8?..." />
+      </label>
+      <div class="row">
+        <button id="btnPlayUrl">直接播放</button>
+      </div>
+    </div>
+
+    <div id="status" class="status">等待播放…</div>
+    <pre id="log" class="log"></pre>
+  </div>
+
+  <script>
+    const player = document.getElementById("player");
+    const statusEl = document.getElementById("status");
+    const logEl = document.getElementById("log");
+    let hls = null;
+
+    function log(msg) {
+      const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      logEl.textContent = (logEl.textContent ? logEl.textContent + "\n" : "") + line;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function setStatus(text, type) {
+      statusEl.textContent = text;
+      statusEl.className = "status" + (type ? " " + type : "");
+    }
+
+    function destroyHls() {
+      if (hls) {
+        hls.destroy();
+        hls = null;
+      }
+      player.removeAttribute("src");
+      player.load();
+    }
+
+    function playM3u8(url) {
+      destroyHls();
+      log("加载: " + url);
+      setStatus("正在加载…");
+
+      if (player.canPlayType("application/vnd.apple.mpegurl")) {
+        player.src = url;
+        player.play().catch(function (e) {
+          setStatus("自动播放被阻止，请手动点击播放", "err");
+          log("play(): " + e.message);
+        });
+        setStatus("使用原生 HLS 播放", "ok");
+        return;
+      }
+
+      if (!window.Hls || !Hls.isSupported()) {
+        setStatus("当前浏览器不支持 hls.js", "err");
+        return;
+      }
+
+      hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+        xhrSetup: function (xhr) {
+          xhr.withCredentials = false;
+        }
+      });
+
+      hls.loadSource(url);
+      hls.attachMedia(player);
+
+      hls.on(Hls.Events.MANIFEST_PARSED, function () {
+        setStatus("清单解析完成，开始播放", "ok");
+        player.play().catch(function (e) {
+          setStatus("自动播放被阻止，请手动点击播放", "err");
+          log("play(): " + e.message);
+        });
+      });
+
+      hls.on(Hls.Events.ERROR, function (_event, data) {
+        log("HLS ERROR " + data.type + " / " + data.details + (data.response ? " HTTP " + data.response.code : ""));
+        if (data.fatal) {
+          setStatus("播放失败: " + data.details, "err");
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              log("尝试恢复网络…");
+              hls.startLoad();
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              log("尝试恢复媒体…");
+              hls.recoverMediaError();
+              break;
+            default:
+              destroyHls();
+              break;
+          }
+        }
+      });
+    }
+
+    async function fetchPlayUrl() {
+      const apiBase = document.getElementById("apiBase").value.replace(/\/$/, "");
+      const videoId = document.getElementById("videoId").value.trim();
+      const token = document.getElementById("token").value.trim();
+
+      if (!videoId || !token) {
+        setStatus("请填写 Video ID 和 Token", "err");
+        return;
+      }
+
+      const url = apiBase + "/api/videos/" + encodeURIComponent(videoId) + "/play?token=" + encodeURIComponent(token);
+      log("请求: " + url.replace(token, token.slice(0, 12) + "…"));
+
+      const res = await fetch(url, {
+        headers: { Accept: "application/json" }
+      });
+
+      const body = await res.json().catch(function () { return {}; });
+
+      if (!res.ok) {
+        const msg = body.message || body.code || res.statusText;
+        setStatus("Play API 失败: " + msg, "err");
+        log("响应: " + JSON.stringify(body));
+        return;
+      }
+
+      if (!body.playUrl) {
+        setStatus("响应缺少 playUrl", "err");
+        log("响应: " + JSON.stringify(body));
+        return;
+      }
+
+      document.getElementById("m3u8Url").value = body.playUrl;
+      log("playUrl: " + body.playUrl);
+      setStatus("已获取 playUrl，expireAt=" + body.expireAt, "ok");
+      playM3u8(body.playUrl);
+    }
+
+    document.getElementById("btnPlayApi").addEventListener("click", function () {
+      fetchPlayUrl().catch(function (e) {
+        setStatus("请求异常: " + e.message, "err");
+        log(String(e));
+      });
+    });
+
+    document.getElementById("btnPlayUrl").addEventListener("click", function () {
+      const url = document.getElementById("m3u8Url").value.trim();
+      if (!url) {
+        setStatus("请填写 m3u8 URL", "err");
+        return;
+      }
+      playM3u8(url);
+    });
+
+    document.getElementById("btnStop").addEventListener("click", function () {
+      player.pause();
+      destroyHls();
+      setStatus("已停止");
+      log("已停止播放");
+    });
+  </script>
+</body>
+</html>

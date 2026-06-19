@@ -55,10 +55,12 @@ func main() {
 	usageRepo := repository.NewUsageRepository(db)
 
 	videoSvc := service.NewVideoService(cfg, videoRepo, q)
+	chunkUploadSvc := service.NewChunkUploadService(cfg, videoSvc)
 	playbackSvc := service.NewPlaybackService(cfg, videoRepo, usageRepo, redis, cos)
 	authSvc := service.NewAuthService(cfg, validator)
 
 	adminHandler := handler.NewAdminHandler(cfg, videoSvc)
+	chunkUploadHandler := handler.NewChunkUploadHandler(chunkUploadSvc)
 	videoHandler := handler.NewVideoHandler(videoSvc, playbackSvc)
 	authHandler := handler.NewAuthHandler(authSvc)
 
@@ -84,6 +86,10 @@ func main() {
 		admin := api.Group("/admin")
 		{
 			admin.POST("/videos/upload", adminHandler.Upload)
+			admin.POST("/videos/upload/init", chunkUploadHandler.Init)
+			admin.GET("/videos/upload/:uploadId", chunkUploadHandler.Status)
+			admin.PUT("/videos/upload/:uploadId/chunks/:index", chunkUploadHandler.UploadChunk)
+			admin.POST("/videos/upload/:uploadId/complete", chunkUploadHandler.Complete)
 			admin.GET("/videos/:id/watch-stats", videoHandler.WatchStats)
 		}
 	}

@@ -16,6 +16,10 @@ const (
 	SegmentDurationSeconds = 6
 	UsageKeyTTL            = 48 * time.Hour
 	OnlineDeviceTTL        = 60 * time.Second
+
+	DefaultChunkSize  = 5 * 1024 * 1024 // 5MB
+	MaxUploadFileSize = 20 * 1024 * 1024 * 1024 // 20GB
+	ChunkUploadTTL    = 24 * time.Hour
 )
 
 type Config struct {
@@ -31,6 +35,10 @@ type Config struct {
 	TempDir     string
 	FFmpegPath  string
 	FFprobePath string
+
+	ChunkSize         int64
+	MaxUploadFileSize int64
+	ChunkUploadTTL    time.Duration
 
 	COSSecretID  string
 	COSSecretKey string
@@ -70,6 +78,10 @@ func Load() *Config {
 		TempDir:     getEnv("TEMP_DIR", "./data/temp"),
 		FFmpegPath:  getEnv("FFMPEG_PATH", "ffmpeg"),
 		FFprobePath: getEnv("FFPROBE_PATH", "ffprobe"),
+
+		ChunkSize:         getEnvInt64("CHUNK_SIZE", DefaultChunkSize),
+		MaxUploadFileSize: getEnvInt64("MAX_UPLOAD_FILE_SIZE", MaxUploadFileSize),
+		ChunkUploadTTL:    time.Duration(getEnvInt("CHUNK_UPLOAD_TTL_HOURS", 24)) * time.Hour,
 
 		COSSecretID:  getEnv("COS_SECRET_ID", ""),
 		COSSecretKey: getEnv("COS_SECRET_KEY", ""),
@@ -126,6 +138,15 @@ func trimQuotes(s string) string {
 func getEnvInt(key string, fallback int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
+}
+
+func getEnvInt64(key string, fallback int64) int64 {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			return n
 		}
 	}

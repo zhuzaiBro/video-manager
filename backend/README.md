@@ -49,7 +49,11 @@ go run ./cmd/video-worker
 
 | 方法 | 路径 | 认证 | 说明 |
 |------|------|------|------|
-| POST | `/api/admin/videos/upload` | 无 | 上传视频，返回 `videoId` |
+| POST | `/api/admin/videos/upload` | 无 | 整文件上传，返回 `videoId` |
+| POST | `/api/admin/videos/upload/init` | 无 | 初始化大文件分片上传 |
+| GET | `/api/admin/videos/upload/{uploadId}` | 无 | 查询分片上传进度 |
+| PUT | `/api/admin/videos/upload/{uploadId}/chunks/{index}` | 无 | 上传单个分片 |
+| POST | `/api/admin/videos/upload/{uploadId}/complete` | 无 | 合并分片并触发转码 |
 | GET | `/api/videos` | 无 | 视频列表 |
 | GET | `/api/videos/{id}` | 无 | 视频详情 |
 | GET | `/api/videos/{id}/play` | 需要 | 获取 CDN 签名播放地址 |
