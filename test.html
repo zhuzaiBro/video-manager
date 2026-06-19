@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Video Manager HLS 测试播放</title>
+  <title>Video Manager 测试台</title>
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
   <style>
     :root {
@@ -42,10 +42,36 @@
     }
 
     .sub {
-      margin: 0 0 24px;
+      margin: 0 0 20px;
       color: var(--muted);
       font-size: 0.95rem;
     }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+
+    .tab {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--muted);
+      border-radius: 999px;
+      padding: 8px 16px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .tab.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    .view { display: none; }
+    .view.active { display: block; }
 
     .player-box {
       background: #000;
@@ -95,6 +121,10 @@
       font: inherit;
     }
 
+    input[type="file"] {
+      padding: 8px;
+    }
+
     textarea {
       min-height: 72px;
       resize: vertical;
@@ -106,6 +136,7 @@
       display: flex;
       gap: 10px;
       flex-wrap: wrap;
+      align-items: center;
     }
 
     button {
@@ -145,7 +176,7 @@
     .log {
       margin: 0;
       padding: 12px;
-      max-height: 180px;
+      max-height: 220px;
       overflow: auto;
       background: var(--bg);
       border: 1px solid var(--border);
@@ -161,69 +192,180 @@
       font-size: 0.8rem;
       color: var(--muted);
     }
+
+    .progress-wrap {
+      margin-top: 12px;
+      height: 10px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #3d7eff, #3ddc84);
+      transition: width 0.2s ease;
+    }
+
+    .progress-text {
+      margin-top: 8px;
+      font-size: 0.875rem;
+      color: var(--muted);
+    }
+
+    .file-meta {
+      margin-top: 8px;
+      font-size: 0.875rem;
+      color: var(--muted);
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.85em;
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>HLS 播放测试</h1>
-    <p class="sub">使用 <a href="https://github.com/video-dev/hls.js/" target="_blank" rel="noreferrer">hls.js</a>（CDN）播放 Video Manager 转码后的 fMP4 切片流。</p>
-
-    <div class="player-box">
-      <video id="player" controls playsinline></video>
-    </div>
+    <h1>Video Manager 测试台</h1>
+    <p class="sub">HLS 播放 + 大文件分片上传测试页</p>
 
     <div class="panel">
-      <h2>方式一：通过 Play API 获取 m3u8</h2>
       <label>
-        API 地址
+        API 地址（播放与上传共用）
         <input id="apiBase" type="url" value="https://video-api.zood.work" />
       </label>
-      <label>
-        Video ID
-        <input id="videoId" type="text" value="83344678-fa0a-43d9-9a76-011e5b4bebc6" placeholder="uuid" />
-      </label>
-      <label>
-        Token（tencentToken 或 Supabase access_token）
-        <textarea id="token" placeholder="Bearer token，不含 Bearer 前缀"></textarea>
-      </label>
-      <div class="row">
-        <button id="btnPlayApi">获取 playUrl 并播放</button>
-        <button id="btnStop" class="secondary" type="button">停止</button>
-      </div>
-      <p class="hint">请求 <code>GET /api/videos/{id}/play?token=...</code>，返回 COS 上的 <code>_play.m3u8</code> 预签名地址。</p>
     </div>
 
-    <div class="panel">
-      <h2>方式二：直接播放 m3u8 地址</h2>
-      <label>
-        m3u8 URL（playUrl 或任意可访问的 playlist）
-        <input id="m3u8Url" type="url" placeholder="https://workspace.zood.work/videos/.../_play.m3u8?..." />
-      </label>
-      <div class="row">
-        <button id="btnPlayUrl">直接播放</button>
-      </div>
+    <div class="tabs">
+      <button class="tab active" data-view="play" type="button">HLS 播放</button>
+      <button class="tab" data-view="upload" type="button">大文件分片上传</button>
     </div>
 
-    <div id="status" class="status">等待播放…</div>
-    <pre id="log" class="log"></pre>
+    <!-- 播放 -->
+    <div id="view-play" class="view active">
+      <div class="player-box">
+        <video id="player" controls playsinline></video>
+      </div>
+
+      <div class="panel">
+        <h2>方式一：通过 Play API 获取 m3u8</h2>
+        <label>
+          Video ID
+          <input id="videoId" type="text" value="83344678-fa0a-43d9-9a76-011e5b4bebc6" placeholder="uuid" />
+        </label>
+        <label>
+          Token（tencentToken 或 Supabase access_token）
+          <textarea id="token" placeholder="不含 Bearer 前缀"></textarea>
+        </label>
+        <div class="row">
+          <button id="btnPlayApi">获取 playUrl 并播放</button>
+          <button id="btnStop" class="secondary" type="button">停止</button>
+        </div>
+        <p class="hint">请求 <code>GET /api/videos/{id}/play?token=...</code></p>
+      </div>
+
+      <div class="panel">
+        <h2>方式二：直接播放 m3u8 地址</h2>
+        <label>
+          m3u8 URL
+          <input id="m3u8Url" type="url" placeholder="https://workspace.zood.work/videos/.../_play.m3u8?..." />
+        </label>
+        <div class="row">
+          <button id="btnPlayUrl">直接播放</button>
+        </div>
+      </div>
+
+      <div id="playStatus" class="status">等待播放…</div>
+      <pre id="playLog" class="log"></pre>
+    </div>
+
+    <!-- 分片上传 -->
+    <div id="view-upload" class="view">
+      <div class="panel">
+        <h2>分片上传 MP4</h2>
+        <label>
+          选择视频文件（.mp4）
+          <input id="uploadFile" type="file" accept="video/mp4,.mp4" />
+        </label>
+        <div id="fileMeta" class="file-meta">未选择文件</div>
+
+        <label>
+          标题
+          <input id="uploadTitle" type="text" placeholder="不传则使用文件名" />
+        </label>
+        <label>
+          描述
+          <input id="uploadDesc" type="text" placeholder="可选" />
+        </label>
+        <label>
+          分片大小（字节，默认 5242880 = 5MB）
+          <input id="chunkSize" type="number" value="5242880" min="1048576" max="52428800" step="1048576" />
+        </label>
+        <label>
+          断点续传 uploadId（可选，留空则新建会话）
+          <input id="resumeUploadId" type="text" placeholder="uuid" />
+        </label>
+
+        <div class="row">
+          <button id="btnUpload">开始分片上传</button>
+          <button id="btnUploadCancel" class="secondary" type="button" disabled>取消</button>
+          <button id="btnCheckStatus" class="secondary" type="button">查询进度</button>
+          <button id="btnGoPlay" class="secondary" type="button" disabled>上传完成 → 去播放</button>
+        </div>
+
+        <div class="progress-wrap">
+          <div id="uploadProgress" class="progress-bar"></div>
+        </div>
+        <div id="uploadProgressText" class="progress-text">0 / 0 分片（0%）</div>
+
+        <p class="hint">
+          流程：<code>POST /upload/init</code> → 循环 <code>PUT /upload/{id}/chunks/{index}</code> → <code>POST /upload/{id}/complete</code><br>
+          支持断点续传：填写 uploadId 后点「开始分片上传」，已上传分片会自动跳过。
+        </p>
+      </div>
+
+      <div id="uploadStatus" class="status">等待上传…</div>
+      <pre id="uploadLog" class="log"></pre>
+    </div>
   </div>
 
   <script>
     const player = document.getElementById("player");
-    const statusEl = document.getElementById("status");
-    const logEl = document.getElementById("log");
     let hls = null;
+    let uploadAbort = false;
+    let lastVideoId = "";
 
-    function log(msg) {
+    function getApiBase() {
+      return document.getElementById("apiBase").value.replace(/\/$/, "");
+    }
+
+    function logTo(el, msg) {
       const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
-      logEl.textContent = (logEl.textContent ? logEl.textContent + "\n" : "") + line;
-      logEl.scrollTop = logEl.scrollHeight;
+      el.textContent = (el.textContent ? el.textContent + "\n" : "") + line;
+      el.scrollTop = el.scrollHeight;
     }
 
-    function setStatus(text, type) {
-      statusEl.textContent = text;
-      statusEl.className = "status" + (type ? " " + type : "");
+    function setStatusEl(el, text, type) {
+      el.textContent = text;
+      el.className = "status" + (type ? " " + type : "");
     }
+
+    // --- Tabs ---
+    document.querySelectorAll(".tab").forEach(function (tab) {
+      tab.addEventListener("click", function () {
+        document.querySelectorAll(".tab").forEach(function (t) { t.classList.remove("active"); });
+        document.querySelectorAll(".view").forEach(function (v) { v.classList.remove("active"); });
+        tab.classList.add("active");
+        document.getElementById("view-" + tab.dataset.view).classList.add("active");
+      });
+    });
+
+    // --- Play ---
+    const playLog = document.getElementById("playLog");
+    const playStatus = document.getElementById("playStatus");
 
     function destroyHls() {
       if (hls) {
@@ -236,113 +378,82 @@
 
     function playM3u8(url) {
       destroyHls();
-      log("加载: " + url);
-      setStatus("正在加载…");
+      logTo(playLog, "加载: " + url);
+      setStatusEl(playStatus, "正在加载…");
 
       if (player.canPlayType("application/vnd.apple.mpegurl")) {
         player.src = url;
         player.play().catch(function (e) {
-          setStatus("自动播放被阻止，请手动点击播放", "err");
-          log("play(): " + e.message);
+          setStatusEl(playStatus, "自动播放被阻止，请手动点击播放", "err");
+          logTo(playLog, "play(): " + e.message);
         });
-        setStatus("使用原生 HLS 播放", "ok");
+        setStatusEl(playStatus, "使用原生 HLS 播放", "ok");
         return;
       }
 
       if (!window.Hls || !Hls.isSupported()) {
-        setStatus("当前浏览器不支持 hls.js", "err");
+        setStatusEl(playStatus, "当前浏览器不支持 hls.js", "err");
         return;
       }
 
-      hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: false,
-        xhrSetup: function (xhr) {
-          xhr.withCredentials = false;
-        }
-      });
-
+      hls = new Hls({ enableWorker: true, lowLatencyMode: false });
       hls.loadSource(url);
       hls.attachMedia(player);
 
       hls.on(Hls.Events.MANIFEST_PARSED, function () {
-        setStatus("清单解析完成，开始播放", "ok");
+        setStatusEl(playStatus, "清单解析完成，开始播放", "ok");
         player.play().catch(function (e) {
-          setStatus("自动播放被阻止，请手动点击播放", "err");
-          log("play(): " + e.message);
+          setStatusEl(playStatus, "自动播放被阻止，请手动点击播放", "err");
         });
       });
 
       hls.on(Hls.Events.ERROR, function (_event, data) {
-        log("HLS ERROR " + data.type + " / " + data.details + (data.response ? " HTTP " + data.response.code : ""));
+        logTo(playLog, "HLS ERROR " + data.type + " / " + data.details);
         if (data.fatal) {
-          setStatus("播放失败: " + data.details, "err");
-          switch (data.type) {
-            case Hls.ErrorTypes.NETWORK_ERROR:
-              log("尝试恢复网络…");
-              hls.startLoad();
-              break;
-            case Hls.ErrorTypes.MEDIA_ERROR:
-              log("尝试恢复媒体…");
-              hls.recoverMediaError();
-              break;
-            default:
-              destroyHls();
-              break;
-          }
+          setStatusEl(playStatus, "播放失败: " + data.details, "err");
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
+          else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+          else destroyHls();
         }
       });
     }
 
     async function fetchPlayUrl() {
-      const apiBase = document.getElementById("apiBase").value.replace(/\/$/, "");
       const videoId = document.getElementById("videoId").value.trim();
       const token = document.getElementById("token").value.trim();
-
       if (!videoId || !token) {
-        setStatus("请填写 Video ID 和 Token", "err");
+        setStatusEl(playStatus, "请填写 Video ID 和 Token", "err");
         return;
       }
 
-      const url = apiBase + "/api/videos/" + encodeURIComponent(videoId) + "/play?token=" + encodeURIComponent(token);
-      log("请求: " + url.replace(token, token.slice(0, 12) + "…"));
+      const url = getApiBase() + "/api/videos/" + encodeURIComponent(videoId) + "/play?token=" + encodeURIComponent(token);
+      logTo(playLog, "请求 play API");
 
-      const res = await fetch(url, {
-        headers: { Accept: "application/json" }
-      });
-
+      const res = await fetch(url, { headers: { Accept: "application/json" } });
       const body = await res.json().catch(function () { return {}; });
 
       if (!res.ok) {
-        const msg = body.message || body.code || res.statusText;
-        setStatus("Play API 失败: " + msg, "err");
-        log("响应: " + JSON.stringify(body));
-        return;
-      }
-
-      if (!body.playUrl) {
-        setStatus("响应缺少 playUrl", "err");
-        log("响应: " + JSON.stringify(body));
+        setStatusEl(playStatus, "Play API 失败: " + (body.message || body.code || res.statusText), "err");
+        logTo(playLog, JSON.stringify(body));
         return;
       }
 
       document.getElementById("m3u8Url").value = body.playUrl;
-      log("playUrl: " + body.playUrl);
-      setStatus("已获取 playUrl，expireAt=" + body.expireAt, "ok");
+      logTo(playLog, "playUrl: " + body.playUrl);
+      setStatusEl(playStatus, "已获取 playUrl", "ok");
       playM3u8(body.playUrl);
     }
 
     document.getElementById("btnPlayApi").addEventListener("click", function () {
       fetchPlayUrl().catch(function (e) {
-        setStatus("请求异常: " + e.message, "err");
-        log(String(e));
+        setStatusEl(playStatus, "请求异常: " + e.message, "err");
       });
     });
 
     document.getElementById("btnPlayUrl").addEventListener("click", function () {
       const url = document.getElementById("m3u8Url").value.trim();
       if (!url) {
-        setStatus("请填写 m3u8 URL", "err");
+        setStatusEl(playStatus, "请填写 m3u8 URL", "err");
         return;
       }
       playM3u8(url);
@@ -351,8 +462,211 @@
     document.getElementById("btnStop").addEventListener("click", function () {
       player.pause();
       destroyHls();
-      setStatus("已停止");
-      log("已停止播放");
+      setStatusEl(playStatus, "已停止");
+    });
+
+    // --- Upload ---
+    const uploadLog = document.getElementById("uploadLog");
+    const uploadStatus = document.getElementById("uploadStatus");
+    const uploadProgress = document.getElementById("uploadProgress");
+    const uploadProgressText = document.getElementById("uploadProgressText");
+    const btnUpload = document.getElementById("btnUpload");
+    const btnUploadCancel = document.getElementById("btnUploadCancel");
+    const btnGoPlay = document.getElementById("btnGoPlay");
+
+    function formatBytes(n) {
+      if (n < 1024) return n + " B";
+      if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+      if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + " MB";
+      return (n / 1024 / 1024 / 1024).toFixed(2) + " GB";
+    }
+
+    function setUploadProgress(done, total) {
+      const pct = total ? Math.round((done / total) * 100) : 0;
+      uploadProgress.style.width = pct + "%";
+      uploadProgressText.textContent = done + " / " + total + " 分片（" + pct + "%）";
+    }
+
+    document.getElementById("uploadFile").addEventListener("change", function (e) {
+      const file = e.target.files[0];
+      const meta = document.getElementById("fileMeta");
+      if (!file) {
+        meta.textContent = "未选择文件";
+        return;
+      }
+      meta.textContent = file.name + " · " + formatBytes(file.size);
+      if (!document.getElementById("uploadTitle").value.trim()) {
+        document.getElementById("uploadTitle").value = file.name.replace(/\.mp4$/i, "");
+      }
+    });
+
+    async function apiJson(url, options) {
+      const res = await fetch(url, options);
+      const body = await res.json().catch(function () { return {}; });
+      if (!res.ok) {
+        const err = new Error(body.message || body.code || res.statusText);
+        err.code = body.code;
+        err.status = res.status;
+        throw err;
+      }
+      return body;
+    }
+
+    async function fetchUploadStatus(uploadId) {
+      return apiJson(getApiBase() + "/api/admin/videos/upload/" + encodeURIComponent(uploadId));
+    }
+
+    document.getElementById("btnCheckStatus").addEventListener("click", async function () {
+      const uploadId = document.getElementById("resumeUploadId").value.trim();
+      if (!uploadId) {
+        setStatusEl(uploadStatus, "请填写 uploadId", "err");
+        return;
+      }
+      try {
+        const status = await fetchUploadStatus(uploadId);
+        logTo(uploadLog, "进度: " + JSON.stringify(status));
+        setUploadProgress(status.uploadedChunks.length, status.totalChunks);
+        setStatusEl(uploadStatus,
+          "已上传 " + status.uploadedChunks.length + "/" + status.totalChunks + " 分片" +
+          (status.completed ? "（已完成，可点 complete）" : ""), status.completed ? "ok" : "");
+      } catch (e) {
+        setStatusEl(uploadStatus, "查询失败: " + e.message, "err");
+      }
+    });
+
+    async function uploadChunk(uploadId, index, blob) {
+      const url = getApiBase() + "/api/admin/videos/upload/" + encodeURIComponent(uploadId) + "/chunks/" + index;
+      const res = await fetch(url, {
+        method: "PUT",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: blob
+      });
+      const body = await res.json().catch(function () { return {}; });
+      if (!res.ok) {
+        throw new Error(body.message || body.code || "chunk " + index + " failed HTTP " + res.status);
+      }
+    }
+
+    async function startChunkUpload() {
+      const fileInput = document.getElementById("uploadFile");
+      const file = fileInput.files[0];
+      if (!file) {
+        setStatusEl(uploadStatus, "请选择 MP4 文件", "err");
+        return;
+      }
+      if (!/\.mp4$/i.test(file.name)) {
+        setStatusEl(uploadStatus, "仅支持 .mp4 文件", "err");
+        return;
+      }
+
+      uploadAbort = false;
+      btnUpload.disabled = true;
+      btnUploadCancel.disabled = false;
+      btnGoPlay.disabled = true;
+      setUploadProgress(0, 0);
+
+      const apiBase = getApiBase();
+      const title = document.getElementById("uploadTitle").value.trim();
+      const desc = document.getElementById("uploadDesc").value.trim();
+      const chunkSizeInput = parseInt(document.getElementById("chunkSize").value, 10) || 5242880;
+      let resumeId = document.getElementById("resumeUploadId").value.trim();
+
+      let uploadId, chunkSize, totalChunks, uploadedSet = new Set();
+
+      try {
+        if (resumeId) {
+          logTo(uploadLog, "断点续传 uploadId=" + resumeId);
+          const status = await fetchUploadStatus(resumeId);
+          if (status.fileName !== file.name || status.fileSize !== file.size) {
+            throw new Error("文件与 upload 会话不匹配（文件名或大小不同）");
+          }
+          uploadId = resumeId;
+          chunkSize = status.chunkSize;
+          totalChunks = status.totalChunks;
+          status.uploadedChunks.forEach(function (i) { uploadedSet.add(i); });
+          setUploadProgress(uploadedSet.size, totalChunks);
+          setStatusEl(uploadStatus, "续传会话，已上传 " + uploadedSet.size + "/" + totalChunks, "ok");
+        } else {
+          logTo(uploadLog, "init: " + file.name + " (" + formatBytes(file.size) + ")");
+          const initBody = {
+            fileName: file.name,
+            fileSize: file.size,
+            chunkSize: chunkSizeInput
+          };
+          if (title) initBody.title = title;
+          if (desc) initBody.description = desc;
+
+          const init = await apiJson(apiBase + "/api/admin/videos/upload/init", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(initBody)
+          });
+
+          uploadId = init.uploadId;
+          chunkSize = init.chunkSize;
+          totalChunks = init.totalChunks;
+          document.getElementById("resumeUploadId").value = uploadId;
+          logTo(uploadLog, "uploadId=" + uploadId + " totalChunks=" + totalChunks + " chunkSize=" + formatBytes(chunkSize));
+          setUploadProgress(0, totalChunks);
+          setStatusEl(uploadStatus, "上传会话已创建", "ok");
+        }
+
+        for (let i = 0; i < totalChunks; i++) {
+          if (uploadAbort) {
+            setStatusEl(uploadStatus, "已取消（uploadId 已保留，可续传）", "err");
+            logTo(uploadLog, "用户取消");
+            return;
+          }
+          if (uploadedSet.has(i)) {
+            logTo(uploadLog, "跳过 chunk " + i + "（已存在）");
+            continue;
+          }
+
+          const start = i * chunkSize;
+          const end = Math.min(start + chunkSize, file.size);
+          const blob = file.slice(start, end);
+
+          logTo(uploadLog, "上传 chunk " + i + " (" + formatBytes(blob.size) + ")");
+          await uploadChunk(uploadId, i, blob);
+          uploadedSet.add(i);
+          setUploadProgress(uploadedSet.size, totalChunks);
+          setStatusEl(uploadStatus, "上传中 " + uploadedSet.size + "/" + totalChunks, "ok");
+        }
+
+        logTo(uploadLog, "complete uploadId=" + uploadId);
+        setStatusEl(uploadStatus, "合并分片中…");
+        const complete = await apiJson(apiBase + "/api/admin/videos/upload/" + encodeURIComponent(uploadId) + "/complete", {
+          method: "POST"
+        });
+
+        lastVideoId = complete.videoId;
+        document.getElementById("videoId").value = lastVideoId;
+        btnGoPlay.disabled = false;
+        setStatusEl(uploadStatus, "上传完成！videoId=" + lastVideoId, "ok");
+        logTo(uploadLog, "videoId=" + lastVideoId + "，转码任务已推送");
+      } catch (e) {
+        setStatusEl(uploadStatus, "上传失败: " + e.message, "err");
+        logTo(uploadLog, "ERROR: " + e.message);
+      } finally {
+        btnUpload.disabled = false;
+        btnUploadCancel.disabled = true;
+      }
+    }
+
+    btnUpload.addEventListener("click", function () {
+      startChunkUpload();
+    });
+
+    btnUploadCancel.addEventListener("click", function () {
+      uploadAbort = true;
+    });
+
+    btnGoPlay.addEventListener("click", function () {
+      if (lastVideoId) {
+        document.getElementById("videoId").value = lastVideoId;
+      }
+      document.querySelector('.tab[data-view="play"]').click();
+      setStatusEl(playStatus, "已切换到播放页，填写 Token 后点播放", "ok");
     });
   </script>
 </body>
