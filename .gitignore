@@ -3,3 +3,6 @@ data/
 *.exe
 *.test
 backend/data/
+.run/
+logs/
+backend/bin/
