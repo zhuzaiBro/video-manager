@@ -1,0 +1,487 @@
+openapi: 3.0.3
+info:
+  title: Video Manager API
+  description: |
+    视频平台后端 API，支持视频上传、转码、播放授权与观看配额控制。
+
+    ## 认证流程
+
+    1. 前端用 Supabase 登录，拿到 `access_token`
+    2. 调用 `POST /api/auth/tencent-token` 换取 `tencentToken`
+    3. 后续播放等接口使用 `Authorization: Bearer {tencentToken}`
+
+    也支持直接传 Supabase `access_token` 访问需认证接口。
+
+    ## 视频状态
+
+    | status | 说明 |
+    |--------|------|
+    | waiting | 等待转码 |
+    | processing | 转码中 |
+    | ready | 可播放 |
+    | failed | 转码失败 |
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:7778
+    description: 本地开发（端口以 backend/.env 中 SERVER_PORT 为准）
+
+tags:
+  - name: health
+    description: 健康检查
+  - name: auth
+    description: 认证
+  - name: admin
+    description: 管理端
+  - name: videos
+    description: 视频
+  - name: playback
+    description: 播放与观看配额
+
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: 健康检查
+      operationId: healthCheck
+      responses:
+        "200":
+          description: 服务正常
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: ok
+
+  /api/auth/tencent-token:
+    post:
+      tags: [auth]
+      summary: Supabase Token 换取腾讯云 Token
+      description: |
+        验证 Supabase access_token，签发用于访问视频平台的 tencentToken。
+
+        请求头携带 Supabase JWT：`Authorization: Bearer {supabase_access_token}`
+      operationId: exchangeTencentToken
+      security:
+        - SupabaseBearer: []
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TencentTokenResponse"
+              example:
+                userId: "550e8400-e29b-41d4-a716-446655440000"
+                tencentToken: "eyJhbGciOiJIUzI1NiIs..."
+                cdnDomain: "https://cdn.example.com"
+                expireAt: 1711111111
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/admin/videos/upload:
+    post:
+      tags: [admin]
+      summary: 上传视频
+      description: |
+        上传 MP4 文件，创建视频记录（status=waiting），并推送转码任务到队列。
+      operationId: uploadVideo
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: MP4 视频文件
+                title:
+                  type: string
+                  description: 标题，不传则使用文件名
+                description:
+                  type: string
+                  description: 视频描述
+      responses:
+        "200":
+          description: 上传成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadResponse"
+              example:
+                videoId: "550e8400-e29b-41d4-a716-446655440000"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/videos:
+    get:
+      tags: [videos]
+      summary: 视频列表
+      operationId: listVideos
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoListResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/videos/{id}:
+    get:
+      tags: [videos]
+      summary: 视频详情
+      operationId: getVideo
+      parameters:
+        - $ref: "#/components/parameters/VideoId"
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Video"
+        "400":
+          $ref: "#/components/responses/InvalidId"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/videos/{id}/play:
+    get:
+      tags: [playback]
+      summary: 获取播放地址
+      description: |
+        校验用户身份、视频状态与每日观看配额，返回 CDN 签名 m3u8 地址。
+
+        Token 通过 URL query 传递：`?token={tencentToken}`
+
+        每日观看上限：28800 秒（8 小时）。
+      operationId: playVideo
+      parameters:
+        - $ref: "#/components/parameters/VideoId"
+        - name: token
+          in: query
+          required: true
+          description: tencentToken 或 supabase access_token
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlayResponse"
+              example:
+                playUrl: https://cdn.example.com/videos/1001/index.m3u8?sign=abc123&t=1711111111
+                expireAt: 1711111111
+        "400":
+          $ref: "#/components/responses/InvalidId"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/WatchLimitExceeded"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/VideoNotReady"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/videos/{id}/segments:
+    post:
+      tags: [playback]
+      summary: 上报切片观看
+      description: |
+        前端每成功加载一个 HLS 切片时调用，每次 +6 秒观看时长。
+
+        若已达每日上限，返回 403。
+      operationId: reportSegment
+      security:
+        - TencentBearer: []
+        - SupabaseBearer: []
+      parameters:
+        - $ref: "#/components/parameters/VideoId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SegmentReportRequest"
+            example:
+              segmentName: seg_000001.m4s
+      responses:
+        "200":
+          description: 上报成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+              example:
+                ok: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/WatchLimitExceeded"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  securitySchemes:
+    SupabaseBearer:
+      type: http
+      scheme: bearer
+      description: Supabase access_token
+    TencentBearer:
+      type: http
+      scheme: bearer
+      description: 通过 /api/auth/tencent-token 换取的 tencentToken
+
+  parameters:
+    VideoId:
+      name: id
+      in: path
+      required: true
+      description: 视频 UUID
+      schema:
+        type: string
+        format: uuid
+        example: "550e8400-e29b-41d4-a716-446655440000"
+    Page:
+      name: page
+      in: query
+      description: 页码，从 1 开始
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: pageSize
+      in: query
+      description: 每页数量，最大 100
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+
+    UploadResponse:
+      type: object
+      properties:
+        videoId:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+
+    TencentTokenResponse:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: uuid
+        tencentToken:
+          type: string
+        cdnDomain:
+          type: string
+        expireAt:
+          type: integer
+          format: int64
+
+    Video:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        cosPrefix:
+          type: string
+          nullable: true
+          example: videos/1001
+        m3u8Path:
+          type: string
+          nullable: true
+          example: videos/1001/index.m3u8
+        duration:
+          type: integer
+          nullable: true
+          description: 时长（秒）
+        width:
+          type: integer
+          nullable: true
+        height:
+          type: integer
+          nullable: true
+        fps:
+          type: number
+          format: double
+          nullable: true
+        segmentCount:
+          type: integer
+          nullable: true
+        status:
+          type: string
+          enum: [waiting, processing, ready, failed]
+        errorMessage:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    VideoListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Video"
+        total:
+          type: integer
+          format: int64
+        page:
+          type: integer
+        pageSize:
+          type: integer
+
+    PlayResponse:
+      type: object
+      properties:
+        playUrl:
+          type: string
+          format: uri
+        expireAt:
+          type: integer
+          format: int64
+          description: Unix 时间戳（秒）
+
+    SegmentReportRequest:
+      type: object
+      required: [segmentName]
+      properties:
+        segmentName:
+          type: string
+          example: seg_000001.m4s
+
+    OkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          example: true
+
+    ErrorResponse:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+
+  responses:
+    BadRequest:
+      description: 请求参数错误
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            invalidRequest:
+              value:
+                code: INVALID_REQUEST
+                message: file is required
+            invalidId:
+              value:
+                code: INVALID_ID
+                message: invalid video id
+
+    InvalidId:
+      description: 无效的视频 ID
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: INVALID_ID
+            message: invalid video id
+
+    Unauthorized:
+      description: 未登录
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: UNAUTHORIZED
+            message: Authentication required
+
+    NotFound:
+      description: 视频不存在
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: NOT_FOUND
+            message: video not found
+
+    VideoNotReady:
+      description: 视频尚未就绪
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: VIDEO_NOT_READY
+            message: video is not ready for playback
+
+    WatchLimitExceeded:
+      description: 每日观看时长已达上限
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: WATCH_LIMIT_EXCEEDED
+            message: Daily watch limit exceeded
+
+    InternalError:
+      description: 服务器内部错误
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: INTERNAL_ERROR
+            message: internal server error
