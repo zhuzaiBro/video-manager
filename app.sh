@@ -15,8 +15,7 @@ WORKER_PID="$RUN_DIR/worker.pid"
 API_LOG="$LOG_DIR/api.log"
 WORKER_LOG="$LOG_DIR/worker.log"
 
-# Go 可执行文件，服务器可通过 backend/.env 设置 GO_BIN
-GO_BIN="${GO_BIN:-go}"
+GO_BIN=""
 
 load_env() {
   if [[ -f "$ENV_FILE" ]]; then
@@ -25,7 +24,35 @@ load_env() {
     source "$ENV_FILE"
     set +a
   fi
-  GO_BIN="${GO_BIN:-go}"
+  GO_BIN="$(resolve_go_bin)" || true
+}
+
+resolve_go_bin() {
+  local candidates=()
+
+  if [[ -n "${GO_BIN:-}" ]]; then
+    candidates+=("$GO_BIN")
+  fi
+
+  candidates+=(
+    /usr/local/btgo/bin/go
+    /usr/local/go/bin/go
+    go
+  )
+
+  local c
+  for c in "${candidates[@]}"; do
+    if [[ "$c" == /* && -x "$c" ]]; then
+      echo "$c"
+      return 0
+    fi
+    if command -v "$c" &>/dev/null; then
+      command -v "$c"
+      return 0
+    fi
+  done
+
+  return 1
 }
 
 ensure_dirs() {
@@ -96,8 +123,10 @@ stop_proc() {
 }
 
 build() {
-  if [[ ! -x "$GO_BIN" ]] && ! command -v "$GO_BIN" &>/dev/null; then
-    echo "[build] go not found: $GO_BIN" >&2
+  load_env
+
+  if [[ -z "$GO_BIN" ]]; then
+    echo "[build] go not found, tried: GO_BIN, /usr/local/btgo/bin/go, /usr/local/go/bin/go, PATH" >&2
     exit 1
   fi
 

@@ -26,6 +26,8 @@ jobs:
           command_timeout: 30m
           script: |
             set -euo pipefail
+            export PATH="/usr/local/btgo/bin:/usr/local/go/bin:$PATH"
+            export GO_BIN="${GO_BIN:-/usr/local/btgo/bin/go}"
             cd "${{ secrets.DEPLOY_PATH }}"
             git fetch origin main
             git reset --hard origin/main
