@@ -1,10 +1,63 @@
 package platform
 
-import "github.com/gin-gonic/gin"
+import (
+	"io"
+
+	"github.com/gin-gonic/gin"
+)
 
 func (h *Handler) interviewHome(c *gin.Context, caller Caller) {
 	row, err := h.service.InterviewHome(c.Request.Context(), caller, c.Query("tag"))
 	writeResult(c, row, err)
+}
+
+func (h *Handler) claimReferral(c *gin.Context, caller Caller) {
+	body, err := readBody(c)
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	row, err := h.service.ClaimReferral(c.Request.Context(), caller, stringField(body, "referrerUserId"), stringField(body, "sourceCollectionId"), stringField(body, "sourceUrl"))
+	writeResult(c, row, err)
+}
+
+func (h *Handler) adminStudy(c *gin.Context, caller Caller) {
+	row, err := h.service.AdminStudy(c.Request.Context(), caller)
+	writeResult(c, row, err)
+}
+
+func (h *Handler) syncProfiles(c *gin.Context, caller Caller) {
+	row, err := h.service.SyncMissingProfiles(c.Request.Context(), caller)
+	writeResult(c, row, err)
+}
+
+func (h *Handler) grantMembership(c *gin.Context, caller Caller) {
+	body, err := readBody(c)
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	vip := int(nonNegative(body["vipLevel"]))
+	if _, ok := body["vipLevel"]; !ok {
+		vip = 1
+	}
+	consultation := int(nonNegative(body["consultationRequestId"]))
+	row, err := h.service.GrantMembership(c.Request.Context(), caller, c.Param("id"), vip, consultation)
+	writeResult(c, row, err)
+}
+
+func (h *Handler) telegramWebhook(c *gin.Context) {
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, 1<<20))
+	if err != nil {
+		writeErr(c, invalid("请求体无法读取"))
+		return
+	}
+	status, payload, err := h.service.HandleTelegram(c.Request.Context(), c.GetHeader("X-Telegram-Bot-Api-Secret-Token"), body)
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	c.JSON(status, payload)
 }
 
 func (h *Handler) getCollection(c *gin.Context, caller Caller) {
@@ -35,7 +88,7 @@ func (h *Handler) setPostCategories(c *gin.Context, caller Caller) {
 
 func (h *Handler) getQuestion(c *gin.Context, caller Caller) {
 	row, err := h.service.GetQuestion(c.Request.Context(), caller, c.Param("id"))
-	writeResult(c, gin.H{"question": row}, err)
+	writeResult(c, row, err)
 }
 
 func (h *Handler) profileCenter(c *gin.Context, caller Caller) {
@@ -253,4 +306,3 @@ func (h *Handler) listVideos(c *gin.Context, caller Caller) {
 	result, err := h.service.ListVideos(c.Request.Context(), caller)
 	writeResult(c, gin.H{"videos": result.Rows}, err)
 }
-

@@ -62,10 +62,14 @@ type Config struct {
 	TokenExpireSec    int
 
 	// 业务平台 API。默认仍读取 Supabase，自建库仅在显式切换后使用。
-	SupabaseURL          string
-	SupabaseAnonKey      string
-	PlatformDataSource   string
-	PlatformDatabaseURL  string
+	SupabaseURL            string
+	SupabaseAnonKey        string
+	SupabaseServiceRoleKey string
+	PlatformDataSource     string
+	PlatformDatabaseURL    string
+	TelegramBotToken       string
+	TelegramWebhookSecret  string
+	TelegramSetupSecret    string
 }
 
 func Load() *Config {
@@ -107,10 +111,14 @@ func Load() *Config {
 		SupabaseJWTSecret: getEnv("SUPABASE_JWT_SECRET", ""),
 		TokenExpireSec:    getEnvInt("TOKEN_EXPIRE_SEC", 3600),
 
-		SupabaseURL:         strings.TrimRight(getEnv("SUPABASE_URL", ""), "/"),
-		SupabaseAnonKey:     getEnv("SUPABASE_ANON_KEY", ""),
-		PlatformDataSource:  strings.ToLower(getEnv("PLATFORM_DATA_SOURCE", "supabase")),
-		PlatformDatabaseURL: getEnv("PLATFORM_DATABASE_URL", ""),
+		SupabaseURL:            strings.TrimRight(getEnv("SUPABASE_URL", ""), "/"),
+		SupabaseAnonKey:        getEnv("SUPABASE_ANON_KEY", ""),
+		SupabaseServiceRoleKey: getEnv("SUPABASE_SERVICE_ROLE_KEY", ""),
+		PlatformDataSource:     strings.ToLower(getEnv("PLATFORM_DATA_SOURCE", "supabase")),
+		PlatformDatabaseURL:    getEnv("PLATFORM_DATABASE_URL", ""),
+		TelegramBotToken:       getEnv("TELEGRAM_BOT_TOKEN", ""),
+		TelegramWebhookSecret:  getEnv("TELEGRAM_WEBHOOK_SECRET", ""),
+		TelegramSetupSecret:    getEnv("TELEGRAM_SETUP_SECRET", ""),
 	}
 
 	if cfg.SupabaseJWTSecret == "" {

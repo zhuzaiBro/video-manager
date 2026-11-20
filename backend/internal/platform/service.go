@@ -8,19 +8,24 @@ import (
 )
 
 const (
-	jobPageSize              = 24
-	monthlyFreeUnlockLimit   = 3
-	membershipPlanPrice      = 129
-	chatRateLimit            = 5
-	publicJobColumns         = "id,title,company_name,company_logo,company_website,location,office_mode_name,work_type_name,min_salary,max_salary,source_created_at,last_synced_at,description,requirements,benefits,extra_content,tags,status"
-	publicJobListColumns     = "id,title,company_name,company_logo,location,office_mode_name,work_type_name,min_salary,max_salary,source_created_at,last_synced_at,description,tags"
-	jobContactColumnsSelect  = "id,title,company_name,email,phone,wechat,telegram"
+	jobPageSize             = 24
+	monthlyFreeUnlockLimit  = 3
+	membershipPlanPrice     = 129
+	chatRateLimit           = 5
+	publicJobColumns        = "id,title,company_name,company_logo,company_website,location,office_mode_name,work_type_name,min_salary,max_salary,source_created_at,last_synced_at,description,requirements,benefits,extra_content,tags,status"
+	publicJobListColumns    = "id,title,company_name,company_logo,location,office_mode_name,work_type_name,min_salary,max_salary,source_created_at,last_synced_at,description,tags"
+	jobContactColumnsSelect = "id,title,company_name,email,phone,wechat,telegram"
 )
 
 type Service struct {
-	source     Source
-	storage    ObjectStorage
-	dataSource string
+	source         Source
+	storage        ObjectStorage
+	dataSource     string
+	privileged     Privileged
+	telegram       TelegramSender
+	webhookSecret  string
+	setupSecret    string
+	durationLookup func(context.Context, string) int
 }
 
 func NewService(source Source, storage ObjectStorage, dataSource string) *Service {
@@ -31,6 +36,16 @@ func NewService(source Source, storage ObjectStorage, dataSource string) *Servic
 }
 
 func (s *Service) DataSource() string { return s.dataSource }
+
+func (s *Service) SetPrivileged(p Privileged)        { s.privileged = p }
+func (s *Service) SetTelegram(sender TelegramSender) { s.telegram = sender }
+func (s *Service) SetTelegramSecrets(webhook, setup string) {
+	s.webhookSecret = webhook
+	s.setupSecret = setup
+}
+func (s *Service) SetDurationLookup(lookup func(context.Context, string) int) {
+	s.durationLookup = lookup
+}
 
 func (s *Service) requireUser(caller Caller) error {
 	if !caller.SignedIn() || !IsUUID(caller.UserID) {
@@ -639,6 +654,8 @@ func (s *Service) CreateMessage(ctx context.Context, caller Caller, sessionID, c
 		return nil, forbidden("无权发送消息")
 	}
 	result.Rows[0]["pageUrl"] = pageURL
+	forwarded := s.forwardUserMessage(ctx, stringField(result.Rows[0], "id"), sessionID, content, pageURL, caller)
+	result.Rows[0]["forwarded"] = forwarded
 	return result.Rows[0], nil
 }
 

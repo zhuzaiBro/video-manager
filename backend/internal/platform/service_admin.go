@@ -203,7 +203,7 @@ func (s *Service) CourseAccess(ctx context.Context, caller Caller, courseID stri
 	enrollments, err := s.many(ctx, caller, Query{
 		Table: "course_enrollments", Select: "id,course_id,user_id,source,status,granted_at,revoked_at,note,created_at,updated_at",
 		Filters: []Filter{{Column: "course_id", Op: "eq", Value: courseID}},
-		Orders: []Order{{Column: "created_at", Desc: true}}, Limit: 200,
+		Orders:  []Order{{Column: "created_at", Desc: true}}, Limit: 200,
 	})
 	if err != nil {
 		return nil, err
@@ -249,7 +249,7 @@ func (s *Service) ListPurchaseRequests(ctx context.Context, caller Caller) (Resu
 		return Result{}, err
 	}
 	return s.many(ctx, caller, Query{
-		Table: "course_purchase_requests",
+		Table:  "course_purchase_requests",
 		Select: "id,course_id,course_title,course_price,user_id,phone,wechat,note,status,admin_note,contacted_at,paid_at,created_at",
 		Orders: []Order{{Column: "created_at", Desc: true}}, Limit: 200,
 	})
@@ -281,7 +281,7 @@ func (s *Service) ListConsultations(ctx context.Context, caller Caller) (Result,
 		return Result{}, err
 	}
 	return s.many(ctx, caller, Query{
-		Table: "membership_consultation_requests",
+		Table:  "membership_consultation_requests",
 		Select: "id,user_id,phone,wechat,note,source,plan_price,status,admin_note,created_at",
 		Orders: []Order{{Column: "created_at", Desc: true}}, Limit: 200,
 	})
@@ -313,7 +313,7 @@ func (s *Service) ListSubmissions(ctx context.Context, caller Caller) (Result, e
 		return Result{}, err
 	}
 	return s.many(ctx, caller, Query{
-		Table: "interview_question_submissions",
+		Table:  "interview_question_submissions",
 		Select: "id,user_id,title,content,tags,status,admin_note,contact,difficulty,attachment_name,attachment_path,attachment_mime_type,created_at,updated_at,user_profiles(id,username,display_name,avatar_url)",
 		Orders: []Order{{Column: "created_at", Desc: true}}, Limit: 200,
 	})

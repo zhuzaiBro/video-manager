@@ -44,4 +44,3 @@ func forbidden(message string) *Error {
 func notFound(message string) *Error {
 	return NewError(404, "NOT_FOUND", message)
 }
-

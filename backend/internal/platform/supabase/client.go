@@ -97,6 +97,35 @@ func (c *Client) Write(ctx context.Context, caller platform.Caller, method strin
 	return platform.Result{Rows: rows}, nil
 }
 
+func (c *Client) FetchSelf(ctx context.Context, caller platform.Caller) (platform.AuthAccount, error) {
+	if !caller.SignedIn() {
+		return platform.AuthAccount{}, platform.NewError(http.StatusUnauthorized, "UNAUTHORIZED", "未登录")
+	}
+	status, body, _, err := c.do(ctx, caller, http.MethodGet, "/auth/v1/user", nil, false)
+	if err != nil {
+		return platform.AuthAccount{}, err
+	}
+	if status >= 400 {
+		return platform.AuthAccount{}, upstreamError(status, body)
+	}
+	return decodeAuthAccount(body)
+}
+
+func decodeAuthAccount(body []byte) (platform.AuthAccount, error) {
+	var payload struct {
+		ID        string         `json:"id"`
+		Email     string         `json:"email"`
+		Phone     string         `json:"phone"`
+		CreatedAt string         `json:"created_at"`
+		Metadata  map[string]any `json:"user_metadata"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return platform.AuthAccount{}, err
+	}
+	created, _ := time.Parse(time.RFC3339, payload.CreatedAt)
+	return platform.AuthAccount{ID: payload.ID, Email: payload.Email, Phone: payload.Phone, CreatedAt: created, Metadata: payload.Metadata}, nil
+}
+
 func (c *Client) Upload(ctx context.Context, caller platform.Caller, bucket, path, contentType string, body []byte) error {
 	if !caller.SignedIn() {
 		return platform.NewError(http.StatusUnauthorized, "UNAUTHORIZED", "未登录")

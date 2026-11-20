@@ -421,4 +421,3 @@ func clampLimit(value, fallback, max int) int {
 	}
 	return value
 }
-

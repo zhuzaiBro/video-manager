@@ -125,7 +125,7 @@ func (s *Service) Sitemap(ctx context.Context, caller Caller) (map[string]any, e
 	posts, err := s.many(ctx, caller, Query{
 		Table: "posts", Select: "slug,updated_at",
 		Filters: []Filter{{Column: "published", Op: "eq", Value: "true"}, {Column: "is_public", Op: "eq", Value: "true"}},
-		Orders: []Order{{Column: "updated_at", Desc: true}}, Limit: 200,
+		Orders:  []Order{{Column: "updated_at", Desc: true}}, Limit: 200,
 	})
 	if err != nil {
 		return nil, err
@@ -155,7 +155,7 @@ func (s *Service) Sitemap(ctx context.Context, caller Caller) (map[string]any, e
 	jobs, err := s.many(ctx, caller, Query{
 		Table: "job_listings", Select: "id,updated_at,last_synced_at",
 		Filters: []Filter{{Column: "status", Op: "eq", Value: "1"}},
-		Orders: []Order{{Column: "last_synced_at", Desc: true}}, Limit: 200,
+		Orders:  []Order{{Column: "last_synced_at", Desc: true}}, Limit: 200,
 	})
 	if err != nil {
 		return nil, err
@@ -176,7 +176,7 @@ func (s *Service) SetPostCategories(ctx context.Context, caller Caller, postID s
 	post, err := s.one(ctx, caller, Query{
 		Table: "posts", Select: "id,author_id",
 		Filters: []Filter{{Column: "id", Op: "eq", Value: postID}, {Column: "author_id", Op: "eq", Value: caller.UserID}},
-		Limit: 1,
+		Limit:   1,
 	})
 	if err != nil {
 		return err
@@ -216,7 +216,11 @@ func (s *Service) GetQuestion(ctx context.Context, caller Caller, id string) (ma
 	if row == nil {
 		return nil, notFound("题目不存在")
 	}
-	return row, nil
+	navigation, err := s.questionNavigation(ctx, caller, row)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"question": row, "navigation": navigation}, nil
 }
 
 func (s *Service) ProfileCenter(ctx context.Context, caller Caller) (map[string]any, error) {
@@ -418,20 +422,20 @@ func (s *Service) SaveResumeRecord(ctx context.Context, caller Caller, input map
 	_, err := s.source.Write(ctx, caller, http.MethodPost, Query{
 		Table: "resume_optimization_records", Select: "id",
 	}, map[string]any{
-		"user_id": caller.UserID,
-		"target_role": stringField(input, "targetRole"),
-		"experience_level": stringField(input, "experienceLevel"),
-		"job_description": nullable(stringField(input, "jobDescription")),
-		"resume_excerpt": stringField(input, "resumeExcerpt"),
-		"score": input["score"],
-		"positioning": input["positioning"],
+		"user_id":           caller.UserID,
+		"target_role":       stringField(input, "targetRole"),
+		"experience_level":  stringField(input, "experienceLevel"),
+		"job_description":   nullable(stringField(input, "jobDescription")),
+		"resume_excerpt":    stringField(input, "resumeExcerpt"),
+		"score":             input["score"],
+		"positioning":       input["positioning"],
 		"rewritten_summary": input["rewrittenSummary"],
 		"optimized_bullets": input["optimizedBullets"],
-		"keywords": input["keywords"],
-		"action_plan": input["actionPlan"],
+		"keywords":          input["keywords"],
+		"action_plan":       input["actionPlan"],
 		"interview_stories": input["interviewStories"],
-		"resume_html": input["resumeHtml"],
-		"meta": input["meta"],
+		"resume_html":       input["resumeHtml"],
+		"meta":              input["meta"],
 	})
 	return err
 }
@@ -448,7 +452,7 @@ func (s *Service) ReserveFaucet(ctx context.Context, caller Caller, wallet, netw
 	recent, err := s.many(ctx, caller, Query{
 		Table: "faucet_claims", Select: "id,created_at",
 		Filters: []Filter{{Column: "wallet_address", Op: "eq", Value: wallet}, {Column: "created_at", Op: "gte", Value: since}},
-		Limit: 5,
+		Limit:   5,
 	})
 	if err != nil {
 		return nil, err

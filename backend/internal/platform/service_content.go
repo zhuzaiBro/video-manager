@@ -22,13 +22,20 @@ func (s *Service) ListCourses(ctx context.Context, caller Caller, status string,
 		}
 		filters = append(filters, Filter{Column: "status", Op: "eq", Value: status})
 	}
-	return s.many(ctx, caller, Query{
+	result, err := s.many(ctx, caller, Query{
 		Table:   "courses",
 		Select:  "id,title,description,cover_image_url,price,is_free,status,sort_order,created_by,created_at,updated_at",
 		Filters: filters,
 		Orders:  []Order{{Column: "sort_order"}, {Column: "created_at"}},
 		Limit:   200,
 	})
+	if err != nil || admin || len(result.Rows) == 0 {
+		return result, err
+	}
+	if err := s.attachPublishedStats(ctx, caller, result.Rows); err != nil {
+		return Result{}, err
+	}
+	return result, nil
 }
 
 func (s *Service) CourseDetail(ctx context.Context, caller Caller, courseID string) (map[string]any, error) {
@@ -133,21 +140,21 @@ func (s *Service) CourseDetail(ctx context.Context, caller Caller, courseID stri
 				reason = "purchase"
 			}
 			item := map[string]any{
-				"id":               lesson["id"],
-				"title":            lesson["title"],
-				"description":      lesson["description"],
-				"coursewareName":   lesson["courseware_name"],
-				"coursewareUrl":    lesson["courseware_url"],
-				"contentHtml":      lesson["content_html"],
-				"contentMarkdown":  lesson["content_markdown"],
-				"durationSeconds":  lesson["duration"],
-				"isFree":           free,
-				"hasVideo":         hasVideo,
-				"isLocked":         hasVideo && !canWatch,
-				"accessReason":     reason,
-				"videoUrl":         nil,
-				"videoId":          nil,
-				"sortOrder":        lesson["sort_order"],
+				"id":              lesson["id"],
+				"title":           lesson["title"],
+				"description":     lesson["description"],
+				"coursewareName":  lesson["courseware_name"],
+				"coursewareUrl":   lesson["courseware_url"],
+				"contentHtml":     lesson["content_html"],
+				"contentMarkdown": lesson["content_markdown"],
+				"durationSeconds": lesson["duration"],
+				"isFree":          free,
+				"hasVideo":        hasVideo,
+				"isLocked":        hasVideo && !canWatch,
+				"accessReason":    reason,
+				"videoUrl":        nil,
+				"videoId":         nil,
+				"sortOrder":       lesson["sort_order"],
 			}
 			if canWatch {
 				item["videoUrl"] = lesson["video_url"]

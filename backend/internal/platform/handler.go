@@ -64,6 +64,11 @@ func (h *Handler) Register(r gin.IRoutes) {
 	r.POST("/api/platform/faucet/reservations", h.optional(h.reserveFaucet))
 	r.POST("/api/platform/faucet/reservations/:id/confirm", h.optional(h.confirmFaucet))
 	r.DELETE("/api/platform/faucet/reservations/:id", h.optional(h.releaseFaucet))
+	r.POST("/api/platform/me/referrals/claim", h.required(h.claimReferral))
+	r.GET("/api/platform/admin/users/study", h.required(h.adminStudy))
+	r.POST("/api/platform/admin/users/sync-profiles", h.required(h.syncProfiles))
+	r.PATCH("/api/platform/admin/users/:id/membership", h.required(h.grantMembership))
+	r.POST("/api/platform/telegram/webhook", h.telegramWebhook)
 	r.POST("/api/platform/admin/courses", h.required(h.createCourse))
 	r.POST("/api/platform/admin/chapters", h.required(h.createChapter))
 	r.PATCH("/api/platform/admin/chapters/:id", h.required(h.updateChapter))
@@ -231,7 +236,13 @@ func (h *Handler) createMessage(c *gin.Context, caller Caller) {
 		return
 	}
 	row, err := h.service.CreateMessage(c.Request.Context(), caller, stringField(body, "sessionId"), stringField(body, "content"), stringField(body, "pageUrl"))
-	writeResult(c, gin.H{"message": row}, err)
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	forwarded, _ := row["forwarded"].(int)
+	delete(row, "forwarded")
+	writeResult(c, gin.H{"message": row, "forwarded": forwarded}, nil)
 }
 
 func (h *Handler) listProgress(c *gin.Context, caller Caller) {
