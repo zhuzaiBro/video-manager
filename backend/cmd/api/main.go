@@ -67,6 +67,7 @@ func main() {
 	r := gin.Default()
 	r.Use(middleware.CORS(cfg.CORSOrigins))
 	r.GET("/health", handler.Health)
+	registerPlatform(r, cfg, validator)
 
 	api := r.Group("/api")
 	{

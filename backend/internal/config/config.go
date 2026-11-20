@@ -60,6 +60,12 @@ type Config struct {
 	JWTSecret         string
 	SupabaseJWTSecret string
 	TokenExpireSec    int
+
+	// 业务平台 API。默认仍读取 Supabase，自建库仅在显式切换后使用。
+	SupabaseURL          string
+	SupabaseAnonKey      string
+	PlatformDataSource   string
+	PlatformDatabaseURL  string
 }
 
 func Load() *Config {
@@ -100,6 +106,11 @@ func Load() *Config {
 		CORSOrigins:       getEnv("CORS_ORIGINS", "*"),
 		SupabaseJWTSecret: getEnv("SUPABASE_JWT_SECRET", ""),
 		TokenExpireSec:    getEnvInt("TOKEN_EXPIRE_SEC", 3600),
+
+		SupabaseURL:         strings.TrimRight(getEnv("SUPABASE_URL", ""), "/"),
+		SupabaseAnonKey:     getEnv("SUPABASE_ANON_KEY", ""),
+		PlatformDataSource:  strings.ToLower(getEnv("PLATFORM_DATA_SOURCE", "supabase")),
+		PlatformDatabaseURL: getEnv("PLATFORM_DATABASE_URL", ""),
 	}
 
 	if cfg.SupabaseJWTSecret == "" {
