@@ -110,7 +110,7 @@ func (s *Service) GetCollection(ctx context.Context, caller Caller, id string) (
 	}
 	questions, err := s.many(ctx, caller, Query{
 		Table:   "interview_question",
-		Select:  "id,title,difficulty,is_vip,vip_level_required,sort,created_at,collection_id",
+		Select:  "id,title,difficulty,is_vip,vip_level_required,sort,created_at,collection_id,interview_question_tags(interview_tags(id,name))",
 		Filters: []Filter{{Column: "collection_id", Op: "eq", Value: id}},
 		Orders:  []Order{{Column: "sort"}, {Column: "created_at"}},
 		Limit:   200,
