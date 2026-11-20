@@ -97,6 +97,28 @@ func (v *Validator) ParseSupabaseToken(tokenString string) (*SupabaseClaims, err
 	return claims, nil
 }
 
+func (v *Validator) IssueSessionToken(userID, email string) (string, int64, error) {
+	if v.supabaseSecret == "" {
+		return "", 0, ErrMissingSecret
+	}
+	expireAt := time.Now().Add(7 * 24 * time.Hour)
+	claims := SupabaseClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   userID,
+			ExpiresAt: jwt.NewNumericDate(expireAt),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Issuer:    "zood-platform",
+		},
+		Email: email,
+		Role:  "authenticated",
+	}
+	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(v.supabaseSecret))
+	if err != nil {
+		return "", 0, err
+	}
+	return signed, expireAt.Unix(), nil
+}
+
 func (v *Validator) IssueTencentToken(userID, email string) (string, int64, error) {
 	expireAt := time.Now().Add(v.tokenExpire)
 	claims := TencentClaims{

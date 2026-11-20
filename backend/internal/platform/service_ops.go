@@ -146,6 +146,7 @@ func (s *Service) ClaimReferral(ctx context.Context, caller Caller, referrerID, 
 	if self.CreatedAt.IsZero() || time.Since(self.CreatedAt) > 7*24*time.Hour {
 		return map[string]any{"awarded": false, "reason": "not_new_user"}, nil
 	}
+	ctx = WithCaller(ctx, caller)
 	exists, err := s.privileged.ReferralExists(ctx, caller.UserID)
 	if err != nil {
 		return nil, err
@@ -209,6 +210,7 @@ func (s *Service) SyncMissingProfiles(ctx context.Context, caller Caller) (map[s
 	if s.privileged == nil {
 		return nil, NewError(http.StatusServiceUnavailable, "PRIVILEGED_UNAVAILABLE", "补齐 Auth 用户需要在后端配置隔离的管理客户端")
 	}
+	ctx = WithCaller(ctx, caller)
 	accounts, err := s.privileged.ListAuthUsers(ctx)
 	if err != nil {
 		return nil, err
@@ -253,6 +255,7 @@ func (s *Service) GrantMembership(ctx context.Context, caller Caller, targetID s
 	if vipLevel < 0 || vipLevel > 5 {
 		return nil, invalid("会员等级必须是 0-5 的整数")
 	}
+	ctx = WithCaller(ctx, caller)
 	profile, found, err := s.privileged.ReadProfile(ctx, targetID)
 	if err != nil {
 		return nil, err
@@ -294,6 +297,7 @@ func (s *Service) AdminStudy(ctx context.Context, caller Caller) (map[string]any
 	if s.privileged == nil {
 		return nil, NewError(http.StatusServiceUnavailable, "PRIVILEGED_UNAVAILABLE", "跨用户学习统计需要在后端配置隔离的管理客户端")
 	}
+	ctx = WithCaller(ctx, caller)
 	now := time.Now()
 	today := shanghaiDay(now, 0)
 	yesterday := shanghaiDay(now, -1)

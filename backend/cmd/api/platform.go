@@ -15,7 +15,7 @@ import (
 	"github.com/zood/video-manager/internal/repository"
 )
 
-func registerPlatform(r *gin.Engine, cfg *config.Config, validator *auth.Validator, videos *repository.VideoRepository) {
+func registerPlatform(r *gin.Engine, cfg *config.Config, validator *auth.Validator, videos *repository.VideoRepository, blob platform.BlobStore) {
 	if cfg.PlatformDataSource != "postgres" {
 		log.Println("warning: platform API disabled, Supabase is not used; set PLATFORM_DATA_SOURCE=postgres")
 		return
@@ -35,6 +35,7 @@ func registerPlatform(r *gin.Engine, cfg *config.Config, validator *auth.Validat
 	}
 	const dataSource = "postgres"
 	service := platform.NewService(pg, nil, dataSource)
+	service.SetPrivileged(pg)
 	service.SetTelegramSecrets(cfg.TelegramWebhookSecret, cfg.TelegramSetupSecret)
 	if cfg.TelegramBotToken != "" {
 		service.SetTelegram(platform.NewTelegram(cfg.TelegramBotToken))
@@ -52,7 +53,9 @@ func registerPlatform(r *gin.Engine, cfg *config.Config, validator *auth.Validat
 			return *video.Duration
 		})
 	}
-	platform.NewHandler(service, validator).Register(r)
+	handler := platform.NewHandler(service, validator)
+	handler.SetBlob(blob)
+	handler.Register(r)
 	log.Printf("platform API enabled, data_source=%s", dataSource)
 }
 

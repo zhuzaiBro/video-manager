@@ -11,8 +11,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/zood/video-manager/internal/auth"
-	cosclient "github.com/zood/video-manager/internal/cos"
 	"github.com/zood/video-manager/internal/config"
+	cosclient "github.com/zood/video-manager/internal/cos"
 	"github.com/zood/video-manager/internal/handler"
 	"github.com/zood/video-manager/internal/middleware"
 	"github.com/zood/video-manager/internal/queue"
@@ -67,7 +67,7 @@ func main() {
 	r := gin.Default()
 	r.Use(middleware.CORS(cfg.CORSOrigins))
 	r.GET("/health", handler.Health)
-	registerPlatform(r, cfg, validator, videoRepo)
+	registerPlatform(r, cfg, validator, videoRepo, cos)
 
 	api := r.Group("/api")
 	{

@@ -12,7 +12,7 @@
 
 调用者身份仍由现有 JWT 校验完成。数据库事务里只把已验证的 `sub` 和 `role` 写进 `request.jwt.claims`，并 `SET LOCAL ROLE` 为 `authenticated` 或 `anon`，让恢复库里原有的 `auth.uid()` 生效。连接账号不能是超级用户，也不能 `BYPASSRLS`。
 
-跨用户会员、邀请、资料补齐和学习统计仍走原来的 `Privileged` 接口，并且仍然先做管理员或本人检查。Supabase 管理客户端已删除，这些接口在本地库上目前返回 503，没有改成信任客户端传来的 `user_id`。
+密码登录读取 `auth.users.encrypted_password` 只发生在 `platform.password_hash_for_email`，该函数不授权给 `anon` 或 `authenticated`。注册不写入 `email_confirmed_at`。跨用户会员、邀请、资料补齐和学习统计仍先做原来的身份检查，再调用同名数据库函数，函数内部用 `auth.uid()` 复核管理员或本人，并且不会接受客户端提交的 `is_admin`。
 
 | 变量 | 作用 |
 | --- | --- |

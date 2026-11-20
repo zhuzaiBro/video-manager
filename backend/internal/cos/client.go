@@ -17,13 +17,13 @@ import (
 )
 
 type Client struct {
-	client       *cos.Client
+	client        *cos.Client
 	presignClient *cos.Client
-	secretID     string
-	secretKey    string
-	bucket       string
-	region       string
-	customDomain string
+	secretID      string
+	secretKey     string
+	bucket        string
+	region        string
+	customDomain  string
 }
 
 func NewClient(cfg *config.Config) (*Client, error) {
@@ -126,6 +126,17 @@ func (c *Client) UploadDir(ctx context.Context, localDir, cosPrefix string) erro
 		})
 		return err
 	})
+}
+
+func (c *Client) PublicObjectURL(key string) string {
+	key = strings.TrimLeft(key, "/")
+	if c.customDomain != "" {
+		return c.customDomain + "/" + key
+	}
+	if c.bucket == "" {
+		return ""
+	}
+	return fmt.Sprintf("https://%s.cos.%s.myqcloud.com/%s", c.bucket, c.region, key)
 }
 
 func (c *Client) ObjectKey(videoID uuid.UUID, filename string) string {

@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -10,16 +11,26 @@ import (
 	"github.com/zood/video-manager/internal/auth"
 )
 
+type BlobStore interface {
+	PutObject(ctx context.Context, key string, body []byte, contentType string) error
+	PublicObjectURL(key string) string
+}
+
 type Handler struct {
 	service   *Service
 	validator *auth.Validator
+	blob      BlobStore
 }
 
 func NewHandler(service *Service, validator *auth.Validator) *Handler {
 	return &Handler{service: service, validator: validator}
 }
 
+func (h *Handler) SetBlob(blob BlobStore) { h.blob = blob }
+
 func (h *Handler) Register(r gin.IRoutes) {
+	h.registerAuth(r)
+	r.POST("/api/platform/uploads", h.required(h.upload))
 	r.GET("/api/platform/health", h.health)
 	r.GET("/api/platform/posts", h.optional(h.listPosts))
 	r.GET("/api/platform/posts/by-slug", h.optional(h.getPost))
