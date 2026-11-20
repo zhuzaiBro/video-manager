@@ -136,10 +136,38 @@ func (s *Service) GetPost(ctx context.Context, caller Caller, slug string) (map[
 func (s *Service) ListCategories(ctx context.Context, caller Caller) (Result, error) {
 	return s.many(ctx, caller, Query{
 		Table:  "post_cates",
-		Select: "id,name,slug,description,created_at",
+		Select: "id,name,slug,description,created_at,post_cate_relations(post_id)",
 		Orders: []Order{{Column: "name"}},
 		Limit:  200,
 	})
+}
+
+func (s *Service) GetCategory(ctx context.Context, caller Caller, slug string) (map[string]any, error) {
+	if !safeFilterValue(slug) {
+		return nil, invalid("分类标识不合法")
+	}
+	category, err := s.one(ctx, caller, Query{
+		Table:   "post_cates",
+		Select:  "id,name,slug,description",
+		Filters: []Filter{{Column: "slug", Op: "eq", Value: slug}},
+		Limit:   1,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if category == nil {
+		return nil, notFound("分类不存在")
+	}
+	relations, err := s.many(ctx, caller, Query{
+		Table:   "post_cate_relations",
+		Select:  "post_id,posts(id,title,slug,excerpt,banner,published,is_public,created_at,author:user_profiles!fk_user_profiles_posts(username,display_name,avatar_url))",
+		Filters: []Filter{{Column: "cate_id", Op: "eq", Value: stringField(category, "id")}},
+		Limit:   100,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"category": category, "relations": relations.Rows}, nil
 }
 
 func (s *Service) PostCategories(ctx context.Context, caller Caller, postID string) (Result, error) {
@@ -160,8 +188,8 @@ func (s *Service) ListComments(ctx context.Context, caller Caller, postID string
 	}
 	return s.many(ctx, caller, Query{
 		Table:   "post_comments",
-		Select:  "id,content,created_at,updated_at,is_deleted,parent_id,post_id,user_id,user:user_profiles!fk_post_comments_user(username,display_name,avatar_url)",
-		Filters: []Filter{{Column: "post_id", Op: "eq", Value: postID}},
+		Select:  "id,content,created_at,updated_at,is_deleted,parent_id,post_id,user_id,user_profiles!fk_post_comments_user(username,display_name,avatar_url)",
+		Filters: []Filter{{Column: "post_id", Op: "eq", Value: postID}, {Column: "is_deleted", Op: "eq", Value: "false"}},
 		Orders:  []Order{{Column: "created_at"}},
 		Limit:   200,
 	})

@@ -24,6 +24,7 @@ func (h *Handler) Register(r gin.IRoutes) {
 	r.GET("/api/platform/posts", h.optional(h.listPosts))
 	r.GET("/api/platform/posts/by-slug", h.optional(h.getPost))
 	r.GET("/api/platform/categories", h.optional(h.listCategories))
+	r.GET("/api/platform/categories/by-slug", h.optional(h.getCategory))
 	r.GET("/api/platform/posts/:id/categories", h.optional(h.postCategories))
 	r.GET("/api/platform/posts/:id/comments", h.optional(h.listComments))
 	r.POST("/api/platform/posts", h.required(h.createPost))
@@ -89,6 +90,11 @@ func (h *Handler) getPost(c *gin.Context, caller Caller) {
 func (h *Handler) listCategories(c *gin.Context, caller Caller) {
 	result, err := h.service.ListCategories(c.Request.Context(), caller)
 	writeResult(c, gin.H{"categories": result.Rows}, err)
+}
+
+func (h *Handler) getCategory(c *gin.Context, caller Caller) {
+	row, err := h.service.GetCategory(c.Request.Context(), caller, c.Query("slug"))
+	writeResult(c, row, err)
 }
 
 func (h *Handler) postCategories(c *gin.Context, caller Caller) {
