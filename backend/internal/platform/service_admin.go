@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"net/http"
+	"time"
 )
 
 func (s *Service) CreateCourse(ctx context.Context, caller Caller, input map[string]any) (map[string]any, error) {
@@ -183,6 +184,139 @@ func (s *Service) Reorder(ctx context.Context, caller Caller, table string, ids 
 		}
 	}
 	return nil
+}
+
+func (s *Service) CourseAccess(ctx context.Context, caller Caller, courseID string) (map[string]any, error) {
+	if err := s.requireAdmin(ctx, caller); err != nil {
+		return nil, err
+	}
+	if !IsUUID(courseID) {
+		return nil, invalid("课程标识不合法")
+	}
+	profiles, err := s.many(ctx, caller, Query{
+		Table: "user_profiles", Select: "id,username,display_name,avatar_url,is_admin,created_at",
+		Orders: []Order{{Column: "created_at", Desc: true}}, Limit: 200,
+	})
+	if err != nil {
+		return nil, err
+	}
+	enrollments, err := s.many(ctx, caller, Query{
+		Table: "course_enrollments", Select: "id,course_id,user_id,source,status,granted_at,revoked_at,note,created_at,updated_at",
+		Filters: []Filter{{Column: "course_id", Op: "eq", Value: courseID}},
+		Orders: []Order{{Column: "created_at", Desc: true}}, Limit: 200,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"profiles": profiles.Rows, "enrollments": enrollments.Rows}, nil
+}
+
+func (s *Service) GrantEnrollment(ctx context.Context, caller Caller, courseID, userID string) error {
+	if err := s.requireAdmin(ctx, caller); err != nil {
+		return err
+	}
+	if !IsUUID(courseID) || !IsUUID(userID) {
+		return invalid("开通参数不合法")
+	}
+	_, err := s.source.Write(ctx, caller, http.MethodPost, Query{
+		Table: "course_enrollments", Select: "id", OnConflict: "course_id,user_id",
+	}, map[string]any{
+		"course_id": courseID, "user_id": userID, "source": "manual", "status": "active",
+		"granted_by": caller.UserID, "granted_at": time.Now().UTC().Format(time.RFC3339),
+		"revoked_by": nil, "revoked_at": nil,
+	})
+	return err
+}
+
+func (s *Service) RevokeEnrollment(ctx context.Context, caller Caller, courseID, userID string) error {
+	if err := s.requireAdmin(ctx, caller); err != nil {
+		return err
+	}
+	if !IsUUID(courseID) || !IsUUID(userID) {
+		return invalid("撤销参数不合法")
+	}
+	_, err := s.source.Write(ctx, caller, http.MethodPatch, Query{
+		Table: "course_enrollments", Select: "id",
+		Filters: []Filter{{Column: "course_id", Op: "eq", Value: courseID}, {Column: "user_id", Op: "eq", Value: userID}},
+	}, map[string]any{
+		"status": "revoked", "revoked_by": caller.UserID, "revoked_at": time.Now().UTC().Format(time.RFC3339),
+	})
+	return err
+}
+
+func (s *Service) ListPurchaseRequests(ctx context.Context, caller Caller) (Result, error) {
+	if err := s.requireAdmin(ctx, caller); err != nil {
+		return Result{}, err
+	}
+	return s.many(ctx, caller, Query{
+		Table: "course_purchase_requests",
+		Select: "id,course_id,course_title,course_price,user_id,phone,wechat,note,status,admin_note,contacted_at,paid_at,created_at",
+		Orders: []Order{{Column: "created_at", Desc: true}}, Limit: 200,
+	})
+}
+
+func (s *Service) UpdatePurchaseRequest(ctx context.Context, caller Caller, id string, input map[string]any) (map[string]any, error) {
+	if err := s.requireAdmin(ctx, caller); err != nil {
+		return nil, err
+	}
+	if !safeFilterValue(id) {
+		return nil, invalid("申请标识不合法")
+	}
+	status := stringField(input, "status")
+	if status != "pending" && status != "contacted" && status != "paid" && status != "closed" {
+		return nil, invalid("无效的申请状态")
+	}
+	result, err := s.source.Write(ctx, caller, http.MethodPatch, Query{
+		Table: "course_purchase_requests", Select: "id,status,admin_note",
+		Filters: []Filter{{Column: "id", Op: "eq", Value: id}},
+	}, map[string]any{"status": status, "admin_note": nullable(stringField(input, "adminNote"))})
+	if err != nil {
+		return nil, err
+	}
+	return result.Rows[0], nil
+}
+
+func (s *Service) ListConsultations(ctx context.Context, caller Caller) (Result, error) {
+	if err := s.requireAdmin(ctx, caller); err != nil {
+		return Result{}, err
+	}
+	return s.many(ctx, caller, Query{
+		Table: "membership_consultation_requests",
+		Select: "id,user_id,phone,wechat,note,source,plan_price,status,admin_note,created_at",
+		Orders: []Order{{Column: "created_at", Desc: true}}, Limit: 200,
+	})
+}
+
+func (s *Service) UpdateConsultation(ctx context.Context, caller Caller, id string, input map[string]any) (map[string]any, error) {
+	if err := s.requireAdmin(ctx, caller); err != nil {
+		return nil, err
+	}
+	if !safeFilterValue(id) {
+		return nil, invalid("咨询标识不合法")
+	}
+	status := stringField(input, "status")
+	if status != "pending" && status != "contacted" && status != "closed" {
+		return nil, invalid("无效的咨询状态")
+	}
+	result, err := s.source.Write(ctx, caller, http.MethodPatch, Query{
+		Table: "membership_consultation_requests", Select: "id,status,admin_note",
+		Filters: []Filter{{Column: "id", Op: "eq", Value: id}},
+	}, map[string]any{"status": status, "admin_note": nullable(stringField(input, "adminNote"))})
+	if err != nil {
+		return nil, err
+	}
+	return result.Rows[0], nil
+}
+
+func (s *Service) ListSubmissions(ctx context.Context, caller Caller) (Result, error) {
+	if err := s.requireAdmin(ctx, caller); err != nil {
+		return Result{}, err
+	}
+	return s.many(ctx, caller, Query{
+		Table: "interview_question_submissions",
+		Select: "id,user_id,title,content,tags,status,admin_note,contact,difficulty,attachment_name,attachment_path,attachment_mime_type,created_at,updated_at,user_profiles(id,username,display_name,avatar_url)",
+		Orders: []Order{{Column: "created_at", Desc: true}}, Limit: 200,
+	})
 }
 
 func (s *Service) ListVideos(ctx context.Context, caller Caller) (Result, error) {

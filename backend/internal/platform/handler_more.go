@@ -7,6 +7,32 @@ func (h *Handler) interviewHome(c *gin.Context, caller Caller) {
 	writeResult(c, row, err)
 }
 
+func (h *Handler) getCollection(c *gin.Context, caller Caller) {
+	row, err := h.service.GetCollection(c.Request.Context(), caller, c.Param("id"))
+	writeResult(c, row, err)
+}
+
+func (h *Handler) sitemap(c *gin.Context, caller Caller) {
+	row, err := h.service.Sitemap(c.Request.Context(), caller)
+	writeResult(c, row, err)
+}
+
+func (h *Handler) setPostCategories(c *gin.Context, caller Caller) {
+	body, err := readBody(c)
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	raw, _ := body["categoryIds"].([]any)
+	ids := make([]string, 0, len(raw))
+	for _, item := range raw {
+		text, _ := item.(string)
+		ids = append(ids, text)
+	}
+	err = h.service.SetPostCategories(c.Request.Context(), caller, c.Param("id"), ids)
+	writeResult(c, gin.H{"ok": err == nil}, err)
+}
+
 func (h *Handler) getQuestion(c *gin.Context, caller Caller) {
 	row, err := h.service.GetQuestion(c.Request.Context(), caller, c.Param("id"))
 	writeResult(c, gin.H{"question": row}, err)
@@ -166,6 +192,61 @@ func (h *Handler) reorder(c *gin.Context, caller Caller) {
 	}
 	err = h.service.Reorder(c.Request.Context(), caller, stringField(body, "resource"), ids)
 	writeResult(c, gin.H{"ok": err == nil}, err)
+}
+
+func (h *Handler) courseAccess(c *gin.Context, caller Caller) {
+	row, err := h.service.CourseAccess(c.Request.Context(), caller, c.Param("id"))
+	writeResult(c, row, err)
+}
+
+func (h *Handler) grantAccess(c *gin.Context, caller Caller) {
+	body, err := readBody(c)
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	err = h.service.GrantEnrollment(c.Request.Context(), caller, c.Param("id"), stringField(body, "userId"))
+	writeResult(c, gin.H{"ok": err == nil}, err)
+}
+
+func (h *Handler) revokeAccess(c *gin.Context, caller Caller) {
+	err := h.service.RevokeEnrollment(c.Request.Context(), caller, c.Param("id"), c.Param("userId"))
+	writeResult(c, gin.H{"ok": err == nil}, err)
+}
+
+func (h *Handler) listPurchases(c *gin.Context, caller Caller) {
+	result, err := h.service.ListPurchaseRequests(c.Request.Context(), caller)
+	writeResult(c, gin.H{"requests": result.Rows}, err)
+}
+
+func (h *Handler) updatePurchase(c *gin.Context, caller Caller) {
+	body, err := readBody(c)
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	row, err := h.service.UpdatePurchaseRequest(c.Request.Context(), caller, c.Param("id"), body)
+	writeResult(c, gin.H{"request": row}, err)
+}
+
+func (h *Handler) listConsultations(c *gin.Context, caller Caller) {
+	result, err := h.service.ListConsultations(c.Request.Context(), caller)
+	writeResult(c, gin.H{"requests": result.Rows}, err)
+}
+
+func (h *Handler) updateConsultation(c *gin.Context, caller Caller) {
+	body, err := readBody(c)
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	row, err := h.service.UpdateConsultation(c.Request.Context(), caller, c.Param("id"), body)
+	writeResult(c, gin.H{"request": row}, err)
+}
+
+func (h *Handler) listSubmissions(c *gin.Context, caller Caller) {
+	result, err := h.service.ListSubmissions(c.Request.Context(), caller)
+	writeResult(c, gin.H{"submissions": result.Rows}, err)
 }
 
 func (h *Handler) listVideos(c *gin.Context, caller Caller) {

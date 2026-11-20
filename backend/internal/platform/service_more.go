@@ -92,6 +92,114 @@ func (s *Service) InterviewHome(ctx context.Context, caller Caller, tagSlug stri
 	}, nil
 }
 
+func (s *Service) GetCollection(ctx context.Context, caller Caller, id string) (map[string]any, error) {
+	if !IsUUID(id) {
+		return nil, invalid("题集标识不合法")
+	}
+	collection, err := s.one(ctx, caller, Query{
+		Table:   "interview_collections",
+		Select:  "id,title,description,icon,cover_image,sort,created_at",
+		Filters: []Filter{{Column: "id", Op: "eq", Value: id}},
+		Limit:   1,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if collection == nil {
+		return nil, notFound("题集不存在")
+	}
+	questions, err := s.many(ctx, caller, Query{
+		Table:   "interview_question",
+		Select:  "id,title,difficulty,is_vip,vip_level_required,sort,created_at,collection_id",
+		Filters: []Filter{{Column: "collection_id", Op: "eq", Value: id}},
+		Orders:  []Order{{Column: "sort"}, {Column: "created_at"}},
+		Limit:   200,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"collection": collection, "questions": questions.Rows}, nil
+}
+
+func (s *Service) Sitemap(ctx context.Context, caller Caller) (map[string]any, error) {
+	posts, err := s.many(ctx, caller, Query{
+		Table: "posts", Select: "slug,updated_at",
+		Filters: []Filter{{Column: "published", Op: "eq", Value: "true"}, {Column: "is_public", Op: "eq", Value: "true"}},
+		Orders: []Order{{Column: "updated_at", Desc: true}}, Limit: 200,
+	})
+	if err != nil {
+		return nil, err
+	}
+	categories, err := s.many(ctx, caller, Query{Table: "post_cates", Select: "slug,created_at", Limit: 200})
+	if err != nil {
+		return nil, err
+	}
+	courses, err := s.many(ctx, caller, Query{
+		Table: "courses", Select: "id,updated_at", Filters: []Filter{{Column: "status", Op: "eq", Value: "published"}}, Limit: 200,
+	})
+	if err != nil {
+		return nil, err
+	}
+	collections, err := s.many(ctx, caller, Query{Table: "interview_collections", Select: "id,created_at", Limit: 200})
+	if err != nil {
+		return nil, err
+	}
+	questions, err := s.many(ctx, caller, Query{Table: "interview_question", Select: "id,updated_at", Limit: 200})
+	if err != nil {
+		return nil, err
+	}
+	tags, err := s.many(ctx, caller, Query{Table: "interview_tags", Select: "slug,created_at", Limit: 100})
+	if err != nil {
+		return nil, err
+	}
+	jobs, err := s.many(ctx, caller, Query{
+		Table: "job_listings", Select: "id,updated_at,last_synced_at",
+		Filters: []Filter{{Column: "status", Op: "eq", Value: "1"}},
+		Orders: []Order{{Column: "last_synced_at", Desc: true}}, Limit: 200,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"posts": posts.Rows, "categories": categories.Rows, "courses": courses.Rows,
+		"collections": collections.Rows, "questions": questions.Rows, "tags": tags.Rows, "jobs": jobs.Rows,
+	}, nil
+}
+
+func (s *Service) SetPostCategories(ctx context.Context, caller Caller, postID string, categoryIDs []string) error {
+	if err := s.requireUser(caller); err != nil {
+		return err
+	}
+	if !IsUUID(postID) {
+		return invalid("文章标识不合法")
+	}
+	post, err := s.one(ctx, caller, Query{
+		Table: "posts", Select: "id,author_id",
+		Filters: []Filter{{Column: "id", Op: "eq", Value: postID}, {Column: "author_id", Op: "eq", Value: caller.UserID}},
+		Limit: 1,
+	})
+	if err != nil {
+		return err
+	}
+	if post == nil {
+		return notFound("文章不存在或无权修改")
+	}
+	if len(categoryIDs) > 20 {
+		return invalid("分类过多")
+	}
+	for _, id := range categoryIDs {
+		if !IsUUID(id) {
+			return invalid("分类标识不合法")
+		}
+		if _, err := s.source.Write(ctx, caller, http.MethodPost, Query{
+			Table: "post_cate_relations", Select: "post_id,cate_id", OnConflict: "post_id,cate_id",
+		}, map[string]any{"post_id": postID, "cate_id": id}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Service) GetQuestion(ctx context.Context, caller Caller, id string) (map[string]any, error) {
 	if !IsUUID(id) {
 		return nil, invalid("题目标识不合法")

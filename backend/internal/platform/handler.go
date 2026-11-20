@@ -50,7 +50,10 @@ func (h *Handler) Register(r gin.IRoutes) {
 	r.POST("/api/platform/course-purchase-requests", h.optional(h.purchase))
 	r.POST("/api/platform/membership-consultations", h.optional(h.consultation))
 	r.GET("/api/platform/interview", h.optional(h.interviewHome))
+	r.GET("/api/platform/interview/collections/:id", h.optional(h.getCollection))
 	r.GET("/api/platform/interview/questions/:id", h.optional(h.getQuestion))
+	r.GET("/api/platform/sitemap", h.optional(h.sitemap))
+	r.PUT("/api/platform/posts/:id/categories", h.required(h.setPostCategories))
 	r.GET("/api/platform/me/center", h.required(h.profileCenter))
 	r.GET("/api/platform/admin/interview/questions", h.required(h.adminQuestions))
 	r.POST("/api/platform/admin/interview/questions", h.required(h.createQuestion))
@@ -70,6 +73,14 @@ func (h *Handler) Register(r gin.IRoutes) {
 	r.DELETE("/api/platform/admin/lessons/:id", h.required(h.deleteLesson))
 	r.POST("/api/platform/admin/reorder", h.required(h.reorder))
 	r.GET("/api/platform/admin/videos", h.required(h.listVideos))
+	r.GET("/api/platform/admin/purchase-requests", h.required(h.listPurchases))
+	r.PATCH("/api/platform/admin/purchase-requests/:id", h.required(h.updatePurchase))
+	r.GET("/api/platform/admin/consultations", h.required(h.listConsultations))
+	r.PATCH("/api/platform/admin/consultations/:id", h.required(h.updateConsultation))
+	r.GET("/api/platform/admin/interview/submissions", h.required(h.listSubmissions))
+	r.GET("/api/platform/admin/courses/:id/access", h.required(h.courseAccess))
+	r.POST("/api/platform/admin/courses/:id/access", h.required(h.grantAccess))
+	r.DELETE("/api/platform/admin/courses/:id/access/:userId", h.required(h.revokeAccess))
 }
 
 func (h *Handler) health(c *gin.Context) {
