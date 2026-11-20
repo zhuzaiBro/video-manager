@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"log"
+	"net/url"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -10,48 +12,29 @@ import (
 	"github.com/zood/video-manager/internal/config"
 	"github.com/zood/video-manager/internal/platform"
 	platformpg "github.com/zood/video-manager/internal/platform/postgres"
-	platformsb "github.com/zood/video-manager/internal/platform/supabase"
 	"github.com/zood/video-manager/internal/repository"
 )
 
 func registerPlatform(r *gin.Engine, cfg *config.Config, validator *auth.Validator, videos *repository.VideoRepository) {
-	var source platform.Source
-	var storage platform.ObjectStorage
-	dataSource := cfg.PlatformDataSource
-	switch dataSource {
-	case "postgres":
-		if cfg.PlatformDatabaseURL == "" {
-			log.Println("warning: platform API disabled, PLATFORM_DATABASE_URL is empty")
-			return
-		}
-		pg, err := platformpg.Open(cfg.PlatformDatabaseURL)
-		if err != nil {
-			log.Printf("warning: platform postgres unavailable, API disabled: %v", err)
-			return
-		}
-		source = pg
-	default:
-		dataSource = "supabase"
-		client, err := platformsb.New(cfg.SupabaseURL, cfg.SupabaseAnonKey)
-		if err != nil {
-			log.Printf("warning: platform API disabled: %v", err)
-			return
-		}
-		source = client
-		storage = client
+	if cfg.PlatformDataSource != "postgres" {
+		log.Println("warning: platform API disabled, Supabase is not used; set PLATFORM_DATA_SOURCE=postgres")
+		return
 	}
-	service := platform.NewService(source, storage, dataSource)
-	if cfg.SupabaseServiceRoleKey != "" {
-		admin, err := platformsb.NewAdmin(cfg.SupabaseURL, cfg.SupabaseServiceRoleKey)
-		if err != nil {
-			log.Printf("warning: isolated admin client disabled: %v", err)
-		} else {
-			service.SetPrivileged(admin)
-			log.Print("platform isolated admin client enabled")
-		}
-	} else {
-		log.Print("warning: SUPABASE_SERVICE_ROLE_KEY is empty; referral, membership, profile sync and telegram mapping return 503")
+	if cfg.PlatformDatabaseURL == "" {
+		log.Println("warning: platform API disabled, PLATFORM_DATABASE_URL is empty")
+		return
 	}
+	if sameDatabase(cfg.DatabaseURL, cfg.PlatformDatabaseURL) {
+		log.Println("warning: platform API disabled, PLATFORM_DATABASE_URL must not be the video DATABASE_URL")
+		return
+	}
+	pg, err := platformpg.Open(cfg.PlatformDatabaseURL)
+	if err != nil {
+		log.Printf("warning: platform postgres unavailable, API disabled: %v", err)
+		return
+	}
+	const dataSource = "postgres"
+	service := platform.NewService(pg, nil, dataSource)
 	service.SetTelegramSecrets(cfg.TelegramWebhookSecret, cfg.TelegramSetupSecret)
 	if cfg.TelegramBotToken != "" {
 		service.SetTelegram(platform.NewTelegram(cfg.TelegramBotToken))
@@ -71,4 +54,17 @@ func registerPlatform(r *gin.Engine, cfg *config.Config, validator *auth.Validat
 	}
 	platform.NewHandler(service, validator).Register(r)
 	log.Printf("platform API enabled, data_source=%s", dataSource)
+}
+
+func sameDatabase(left, right string) bool {
+	return normalizeDatabase(left) != "" && normalizeDatabase(left) == normalizeDatabase(right)
+}
+
+func normalizeDatabase(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return strings.TrimSpace(raw)
+	}
+	parsed.User = nil
+	return parsed.Scheme + "://" + parsed.Host + parsed.Path
 }

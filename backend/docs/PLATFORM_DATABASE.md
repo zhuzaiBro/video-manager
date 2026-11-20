@@ -6,26 +6,21 @@
 
 `.github/workflows/deploy.yml` 只在推送到 `main` 时执行。它用 GitHub secret 里的 `SSH_HOST`、`SSH_USER`、`SSH_PRIVATE_KEY` 和 `DEPLOY_PATH` 登录，在目标目录执行 `git fetch && git reset --hard origin/main && ./app.sh redeploy`。仓库没有把 `biz.zood.work` 写成 HTTP 服务地址。`biz.zood.work` 是一台跑多个站点的宝塔 Nginx 主机，不能据此认为该域名已经提供 `/api/platform`。当前 PR 没有合并到 `main`，因此生产上的 video-api 还没有这些路由。
 
-## 身份和隔离的管理客户端
+## 数据访问边界
 
-普通读写使用调用者自己的 Supabase access token，anon key 只放在服务器。`internal/platform/supabase/client.go` 拒绝 service role。
+平台读写只有一条路径：现有 `/api/platform/*` handler 和 `platform.Service`，底下是 `internal/platform/postgres`。进程不再创建 Supabase HTTP 客户端。视频上传和播放仍用原来的 `DATABASE_URL` 连接池，平台用 `PLATFORM_DATABASE_URL`，两个地址相同则平台接口不启动。
 
-邀请奖励、跨用户会员、Auth 用户补齐、全站学习统计和 Telegram 客服映射使用另一个类型 `Admin`。它只在 `SUPABASE_SERVICE_ROLE_KEY` 的 JWT role 确认为 `service_role` 时创建，并且没有通用查询方法。业务代码必须先用用户 JWT 确认管理员或本人，Telegram webhook 必须先比对 `TELEGRAM_WEBHOOK_SECRET`，然后才能调用具名方法。未配置时这些接口返回 503，不会退回用用户 JWT 假装成功。
+调用者身份仍由现有 JWT 校验完成。数据库事务里只把已验证的 `sub` 和 `role` 写进 `request.jwt.claims`，并 `SET LOCAL ROLE` 为 `authenticated` 或 `anon`，让恢复库里原有的 `auth.uid()` 生效。连接账号不能是超级用户，也不能 `BYPASSRLS`。
 
-| 变量 | 作用 | 默认 |
-| --- | --- | --- |
-| `SUPABASE_URL` | 项目 URL，仅服务器 | 空则不启用平台 API |
-| `SUPABASE_ANON_KEY` | anon 或 publishable key，仅服务器 | 空则不启用 |
-| `SUPABASE_JWT_SECRET` | 校验用户 JWT | 已有配置 |
-| `SUPABASE_SERVICE_ROLE_KEY` | 只给隔离管理客户端 | 空则特权接口 503 |
-| `TELEGRAM_BOT_TOKEN` | 后端代发客服消息 | 空则只保存站内消息 |
-| `TELEGRAM_WEBHOOK_SECRET` | Telegram webhook 共享密钥 | 空则 webhook 401 |
-| `TELEGRAM_SETUP_SECRET` | `/start` 绑定客服口令 | 空则不能绑定 |
-| `PLATFORM_DATA_SOURCE` | `supabase` 或 `postgres` | `supabase` |
-| `PLATFORM_DATABASE_URL` | 自建库，仅 `postgres` 时使用 | 空 |
+跨用户会员、邀请、资料补齐和学习统计仍走原来的 `Privileged` 接口，并且仍然先做管理员或本人检查。Supabase 管理客户端已删除，这些接口在本地库上目前返回 503，没有改成信任客户端传来的 `user_id`。
 
-不要把这些值写进仓库或 `NEXT_PUBLIC_`。本仓库没有读取 `127.0.0.1:55432`，也没有切换数据源。
+| 变量 | 作用 |
+| --- | --- |
+| `PLATFORM_DATA_SOURCE` | 必须是 `postgres`，其他值不启用平台 API |
+| `PLATFORM_DATABASE_URL` | 本地业务库，不能等于视频库 |
+| `SUPABASE_JWT_SECRET` | 只在本地校验会话 JWT，不访问 Supabase |
+| `DATABASE_URL` | 只给现有视频库 |
 
-## 自建库
+`backend/migrations/003_platform_independent.sql` 使用 `app.user_id`，不要应用到已经有 `auth.uid()` 策略的恢复库。
 
-自建 PostgreSQL 仍然独立存在。不要把 Supabase 备份恢复进生产库，也不要为了这份改动把 `PLATFORM_DATA_SOURCE` 改成 `postgres`。`backend/migrations/003_platform_independent.sql` 只准备访问策略，不复制数据。
+登录、OAuth、Web3、Storage 上传和客服 Realtime 仍由现有前端 Supabase SDK 触发。它们不是这次数据查询边界的一部分，见发布说明，不在这里再做一套认证框架。

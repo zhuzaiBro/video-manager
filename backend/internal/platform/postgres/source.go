@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,8 +15,8 @@ import (
 	"github.com/zood/video-manager/internal/platform"
 )
 
-// Source is the optional self-hosted database. It stays closed unless
-// PLATFORM_DATA_SOURCE=postgres.
+// Source is the platform database. It is a separate pool from the video
+// service database and is used only when PLATFORM_DATA_SOURCE=postgres.
 type Source struct {
 	db *sql.DB
 }
@@ -25,13 +26,29 @@ func Open(databaseURL string) (*Source, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(8)
+	// The restored database is capped at 512MiB. Keep this pool separate from
+	// the video service pool and small enough that both can coexist.
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(30 * time.Minute)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
+	}
+	var super, bypass bool
+	err = db.QueryRowContext(ctx, `
+		SELECT rolsuper, rolbypassrls
+		FROM pg_roles
+		WHERE rolname = current_user
+	`).Scan(&super, &bypass)
+	if err != nil || super || bypass {
+		_ = db.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, platform.NewError(http.StatusInternalServerError, "FORBIDDEN", "平台数据库连接不能是超级用户，也不能绕过行级安全")
 	}
 	return &Source{db: db}, nil
 }
@@ -157,18 +174,63 @@ func (s *Source) queryMaps(ctx context.Context, caller platform.Caller, text str
 }
 
 func (s *Source) withScope(ctx context.Context, caller platform.Caller, fn func(*sql.Tx) error) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		role := "anon"
+		if caller.UserID != "" {
+			role = "authenticated"
+		}
+		// Role names are fixed. They are not taken from the request.
+		statement := `SET LOCAL ROLE anon`
+		if role == "authenticated" {
+			statement = `SET LOCAL ROLE authenticated`
+		}
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("application role cannot assume %s: %w", role, err)
+		}
+		if err := setJWTClaims(ctx, tx, caller); err != nil {
+			return err
+		}
+		return fn(tx)
+	})
+}
+
+func (s *Source) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.user_id', $1, true)`, caller.UserID); err != nil {
-		return err
-	}
 	if err := fn(tx); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+func setJWTClaims(ctx context.Context, tx *sql.Tx, caller platform.Caller) error {
+	claims := map[string]any{"role": "anon"}
+	if caller.UserID != "" {
+		claims["role"] = "authenticated"
+		claims["sub"] = caller.UserID
+		if caller.Email != "" {
+			claims["email"] = caller.Email
+		}
+	}
+	encoded, err := json.Marshal(claims)
+	if err != nil {
+		return err
+	}
+	sub := caller.UserID
+	role, _ := claims["role"].(string)
+	if _, err := tx.ExecContext(ctx, `
+		SELECT
+			set_config('request.jwt.claims', $1, true),
+			set_config('request.jwt.claim.sub', $2, true),
+			set_config('request.jwt.claim.role', $3, true),
+			set_config('app.user_id', $2, true)
+	`, string(encoded), sub, role); err != nil {
+		return err
+	}
+	return nil
 }
 
 func scanMaps(rows *sql.Rows) ([]map[string]any, error) {

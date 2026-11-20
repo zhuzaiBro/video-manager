@@ -27,6 +27,12 @@ func NewDB(databaseURL string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connect database: %w", err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("video database pool: %w", err)
+	}
+	sqlDB.SetMaxOpenConns(8)
+	sqlDB.SetMaxIdleConns(2)
 	return &DB{DB: db}, nil
 }
 
