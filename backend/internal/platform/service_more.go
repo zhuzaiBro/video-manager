@@ -114,7 +114,7 @@ func (s *Service) GetCollection(ctx context.Context, caller Caller, id string) (
 	}
 	collection, err := s.one(ctx, caller, Query{
 		Table:   "interview_collections",
-		Select:  "id,title,description,icon,cover_image,sort,created_at",
+		Select:  "id,title,description,icon,sort,created_at,updated_at",
 		Filters: []Filter{{Column: "id", Op: "eq", Value: id}},
 		Limit:   1,
 	})
