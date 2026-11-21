@@ -22,4 +22,3 @@ func ExtractToken(c *gin.Context) string {
 	}
 	return ExtractBearerToken(c.GetHeader("Authorization"))
 }
-
