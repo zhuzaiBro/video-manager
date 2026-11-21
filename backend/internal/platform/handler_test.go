@@ -141,6 +141,17 @@ func TestAdminUserListRejectsAnonymousAndNormalUsers(t *testing.T) {
 	}
 }
 
+func TestAdminStudyAuthorizesBeforeReadingQuery(t *testing.T) {
+	userID := "8b1b5d4e-6a7c-4d11-9a1e-0d4c2b6f8a10"
+	source := &fakeSource{tables: map[string][]map[string]any{
+		"user_profiles": {{"id": userID, "is_admin": false}},
+	}}
+	response := perform(testRouter(source), http.MethodGet, "/api/platform/admin/users/study?pageSize=999&sort=phone", "", signUser(t, userID))
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestPublicJobQueryOmitsContacts(t *testing.T) {
 	source := &fakeSource{tables: map[string][]map[string]any{
 		"job_listings": {{"id": "8b1b5d4e-6a7c-4d11-9a1e-0d4c2b6f8a10", "title": "Engineer", "email": "hidden@example.com"}},

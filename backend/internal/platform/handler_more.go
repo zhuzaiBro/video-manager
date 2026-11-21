@@ -22,7 +22,7 @@ func (h *Handler) claimReferral(c *gin.Context, caller Caller) {
 }
 
 func (h *Handler) adminStudy(c *gin.Context, caller Caller) {
-	row, err := h.service.AdminStudy(c.Request.Context(), caller)
+	row, err := h.service.AdminStudy(c.Request.Context(), caller, c.Request.URL.Query())
 	writeResult(c, row, err)
 }
 

@@ -122,6 +122,8 @@ func (s *Source) ListAuthUsers(ctx context.Context) ([]platform.AuthAccount, err
 	return out, nil
 }
 
+// ListProfiles is the bounded profile helper used by backfill. The admin study
+// list does not use it; that path pages with ReadAdminStudy.
 func (s *Source) ListProfiles(ctx context.Context) ([]map[string]any, error) {
 	caller, err := callerFrom(ctx)
 	if err != nil {
