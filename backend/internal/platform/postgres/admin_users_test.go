@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/url"
 	"strconv"
@@ -13,11 +14,15 @@ import (
 	"github.com/zood/video-manager/internal/platform"
 )
 
-// The previous regression used two profiles and one log. Both fit under the
-// generic 200-row cap, so production (287 profiles, more than 200 logs) still
-// failed closed. This test uses that production cardinality.
+// Production evidence this fixture follows:
+// user_profiles.id is uuid; is_admin and vip_level and created_at are nullable.
+// video_access_logs.user_id and video_id are text, watch_seconds is nullable
+// integer, ip is inet, created_at is nullable timestamptz.
+// There are 287 profiles: is_admin true 6, false 258, null 23, vip_level 0 is 271.
+// A direct user_id = profiles.id comparison is text = uuid and must fail.
+// The earlier fixture declared user_id as uuid, so it could not see that error.
 func TestAdminUserListPagesRealScaleWithoutPlatformSchema(t *testing.T) {
-	_, dsn := startPostgresOn(t, "55496")
+	_, dsn := startPostgresOn(t, "55497")
 	adminDB := openDB(t, dsn)
 	for _, statement := range []string{
 		`CREATE ROLE anon NOLOGIN NOSUPERUSER NOBYPASSRLS`,
@@ -30,7 +35,7 @@ func TestAdminUserListPagesRealScaleWithoutPlatformSchema(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	db := openDB(t, "postgres://postgres@127.0.0.1:55496/zood_admin_users?sslmode=disable")
+	db := openDB(t, "postgres://postgres@127.0.0.1:55497/zood_admin_users?sslmode=disable")
 	for _, statement := range []string{
 		`CREATE SCHEMA auth`,
 		`CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$
@@ -50,11 +55,11 @@ func TestAdminUserListPagesRealScaleWithoutPlatformSchema(t *testing.T) {
 		)`,
 		`CREATE TABLE public.video_access_logs (
 			id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-			user_id uuid NOT NULL,
-			video_id uuid NOT NULL,
+			user_id text NOT NULL,
+			video_id text NOT NULL,
 			segment_name text,
 			watch_seconds integer,
-			ip text,
+			ip inet,
 			created_at timestamptz
 		)`,
 		`CREATE TABLE public.posts (
@@ -88,6 +93,18 @@ func TestAdminUserListPagesRealScaleWithoutPlatformSchema(t *testing.T) {
 	if err := db.QueryRow(`SELECT count(*) FROM information_schema.schemata WHERE schema_name = 'platform'`).Scan(&schemaCount); err != nil || schemaCount != 0 {
 		t.Fatalf("platform schema = %d (%v)", schemaCount, err)
 	}
+	assertColumn(t, db, "user_profiles", "id", "uuid", "NO")
+	assertColumn(t, db, "user_profiles", "username", "text", "NO")
+	assertColumn(t, db, "user_profiles", "display_name", "text", "YES")
+	assertColumn(t, db, "user_profiles", "avatar_url", "text", "YES")
+	assertColumn(t, db, "user_profiles", "is_admin", "boolean", "YES")
+	assertColumn(t, db, "user_profiles", "vip_level", "integer", "YES")
+	assertColumn(t, db, "user_profiles", "created_at", "timestamp with time zone", "YES")
+	assertColumn(t, db, "video_access_logs", "user_id", "text", "NO")
+	assertColumn(t, db, "video_access_logs", "video_id", "text", "NO")
+	assertColumn(t, db, "video_access_logs", "watch_seconds", "integer", "YES")
+	assertColumn(t, db, "video_access_logs", "ip", "inet", "YES")
+	assertColumn(t, db, "video_access_logs", "created_at", "timestamp with time zone", "YES")
 
 	const total = 287
 	tieAt := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
@@ -168,17 +185,32 @@ func TestAdminUserListPagesRealScaleWithoutPlatformSchema(t *testing.T) {
 	}
 	for _, log := range []struct {
 		user    string
+		video   string
 		seconds any
 		at      time.Time
 	}{
-		{ids[8], 0, todayStart.Add(2 * time.Hour)},
-		{ids[9], nil, todayStart.Add(3 * time.Hour)},
-		{ids[11], 7, yesterdayStart},
-		{ids[12], 8, todayStart},
-		{ids[13], 999, yesterdayStart.Add(-time.Second)},
-		{ids[14], 9, todayEnd},
+		{ids[8], videos[0], 0, todayStart.Add(2 * time.Hour)},
+		{ids[9], videos[0], nil, todayStart.Add(3 * time.Hour)},
+		{ids[11], videos[0], 7, yesterdayStart},
+		{ids[12], videos[0], 8, todayStart},
+		{ids[13], videos[0], 999, yesterdayStart.Add(-time.Second)},
+		{ids[14], videos[0], 9, todayEnd},
+		{heavyID, "not-a-uuid-video", 1, todayStart.Add(time.Hour)},
+		{"not-a-uuid", "lesson-segment", 3, todayStart.Add(time.Hour)},
+		{"", "lesson-segment", 4, todayStart.Add(time.Hour)},
+		{strings.ToUpper(heavyID), videos[0], 5, todayStart.Add(time.Hour)},
 	} {
-		if _, err := insertLog.Exec(log.user, videos[0], "secret-segment", log.seconds, "203.0.113.50", log.at); err != nil {
+		if _, err := insertLog.Exec(log.user, log.video, "secret-segment", log.seconds, "203.0.113.50", log.at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := tx.Exec(`INSERT INTO public.video_access_logs
+		(user_id, video_id, segment_name, watch_seconds, ip, created_at)
+		VALUES ($1, $2, 'secret-segment', 50, '203.0.113.50', NULL)`, heavyID, videos[0]); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 40; i++ {
+		if _, err := insertLog.Exec(heavyID, videos[0], "secret-segment", 10, "203.0.113.50", yesterdayStart.Add(-2*time.Hour)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -222,7 +254,13 @@ func TestAdminUserListPagesRealScaleWithoutPlatformSchema(t *testing.T) {
 		t.Fatalf("tied admins = %d", len(tied))
 	}
 
-	source, err := Open("postgres://zood_app:local-test-only@127.0.0.1:55496/zood_admin_users?sslmode=disable")
+	var ignored int
+	err = db.QueryRow(`SELECT 1 FROM public.user_profiles AS profiles LEFT JOIN public.video_access_logs AS logs ON logs.user_id = profiles.id LIMIT 1`).Scan(&ignored)
+	if err == nil || !strings.Contains(err.Error(), "42883") {
+		t.Fatalf("text = uuid fixture was not reproduced: %v", err)
+	}
+
+	source, err := Open("postgres://zood_app:local-test-only@127.0.0.1:55497/zood_admin_users?sslmode=disable")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,10 +297,10 @@ func TestAdminUserListPagesRealScaleWithoutPlatformSchema(t *testing.T) {
 			t.Fatalf("totals = %#v %#v", summary, pageInfo)
 		}
 		if page == 1 {
-			if intOf(t, summary["todayStudySeconds"]) != 228 || intOf(t, summary["yesterdayStudySeconds"]) != 7 {
+			if intOf(t, summary["todayStudySeconds"]) != 241 || intOf(t, summary["yesterdayStudySeconds"]) != 7 {
 				t.Fatalf("study summary = %#v", summary)
 			}
-			if intOf(t, summary["activeTodayCount"]) != 4 || intOf(t, summary["activeYesterdayCount"]) != 1 {
+			if intOf(t, summary["activeTodayCount"]) != 7 || intOf(t, summary["activeYesterdayCount"]) != 1 {
 				t.Fatalf("active summary = %#v", summary)
 			}
 			encoded, _ := json.Marshal(result)
@@ -373,7 +411,7 @@ func TestAdminUserListPagesRealScaleWithoutPlatformSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	top := usersOf(t, sorted)[0]
-	if top["id"] != heavyID || top["todayStudySeconds"] != int64(220) || top["uniqueVideoCount"] != int64(3) || top["yesterdayStudySeconds"] != int64(0) {
+	if top["id"] != heavyID || top["todayStudySeconds"] != int64(221) || top["uniqueVideoCount"] != int64(4) || top["yesterdayStudySeconds"] != int64(0) {
 		t.Fatalf("heavy = %#v", top)
 	}
 	quiet, err := service.AdminStudy(ctx, admin, url.Values{"q": {"user-0020"}, "pageSize": {"12"}})
@@ -426,8 +464,12 @@ func TestAdminUserListPagesRealScaleWithoutPlatformSchema(t *testing.T) {
 		t.Fatalf("cohort unique = %d", len(cohortSeen))
 	}
 
-	if _, err := db.Exec(`DELETE FROM public.video_access_logs`); err != nil {
+	if _, err := db.Exec(`DELETE FROM public.video_access_logs WHERE created_at IS NULL OR created_at >= $1`, yesterdayStart); err != nil {
 		t.Fatal(err)
+	}
+	var historical int
+	if err := db.QueryRow(`SELECT count(*) FROM public.video_access_logs`).Scan(&historical); err != nil || historical == 0 {
+		t.Fatalf("historical logs = %d (%v)", historical, err)
 	}
 	empty, err := service.AdminStudy(ctx, admin, url.Values{"pageSize": {"12"}})
 	if err != nil {
@@ -457,6 +499,16 @@ func TestAdminUserListPagesRealScaleWithoutPlatformSchema(t *testing.T) {
 	})
 	if err != nil || len(posts.Rows) != 1 || posts.Rows[0]["title"] != "Public" {
 		t.Fatalf("public posts = %+v %v", posts.Rows, err)
+	}
+}
+
+func assertColumn(t *testing.T, db *sql.DB, table, column, dataType, nullable string) {
+	t.Helper()
+	var gotType, gotNull string
+	err := db.QueryRow(`SELECT data_type, is_nullable FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`, table, column).Scan(&gotType, &gotNull)
+	if err != nil || gotType != dataType || gotNull != nullable {
+		t.Fatalf("%s.%s = %s %s (%v), want %s %s", table, column, gotType, gotNull, err, dataType, nullable)
 	}
 }
 

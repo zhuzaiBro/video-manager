@@ -52,6 +52,7 @@ func (s *Source) ReadAdminStudy(ctx context.Context, query platform.AdminStudyQu
 				COALESCE(stats.today_seconds, 0), COALESCE(stats.yesterday_seconds, 0),
 				COALESCE(stats.video_count, 0), stats.recent_at
 			FROM public.user_profiles AS profiles
+			-- user_id is text. Cast the uuid profile id; never cast log ids to uuid.
 			LEFT JOIN (
 				SELECT user_id,
 					SUM(GREATEST(COALESCE(watch_seconds, 0), 0)) FILTER (WHERE created_at >= $3 AND created_at < $4) AS today_seconds,
@@ -61,7 +62,7 @@ func (s *Source) ReadAdminStudy(ctx context.Context, query platform.AdminStudyQu
 				FROM public.video_access_logs
 				WHERE created_at >= $2 AND created_at < $4
 				GROUP BY user_id
-			) AS stats ON stats.user_id = profiles.id
+			) AS stats ON stats.user_id = profiles.id::text
 			WHERE $1 = ''
 				OR profiles.username ILIKE $5 ESCAPE '\'
 				OR COALESCE(profiles.display_name, '') ILIKE $5 ESCAPE '\'
