@@ -54,6 +54,11 @@ func Open(databaseURL string) (*Source, error) {
 }
 
 func (s *Source) Select(ctx context.Context, caller platform.Caller, query platform.Query) (platform.Result, error) {
+	flat, embeds, err := platform.PrepareSelect(query)
+	if err != nil {
+		return platform.Result{}, err
+	}
+	query = flat
 	statement, err := platform.SQL(query, false)
 	if err != nil {
 		return platform.Result{}, err
@@ -76,6 +81,9 @@ func (s *Source) Select(ctx context.Context, caller platform.Caller, query platf
 			return platform.Result{}, err
 		}
 		result.Count = &count
+	}
+	if err := s.attachEmbeds(ctx, caller, query.Table, embeds, result.Rows); err != nil {
+		return platform.Result{}, err
 	}
 	return result, nil
 }

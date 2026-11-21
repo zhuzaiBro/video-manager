@@ -349,7 +349,8 @@ func (s *Service) ListJobs(ctx context.Context, caller Caller, keyword string, r
 	if page > 400 {
 		page = 400
 	}
-	filters := []Filter{{Column: "status", Op: "eq", Value: "1"}}
+	// Public job policy is USING (true). status defaults to 0 and is not a visibility flag.
+	filters := []Filter{}
 	if strings.TrimSpace(keyword) != "" {
 		filters = append(filters, Filter{Op: "or_ilike", Columns: []string{"title", "company_name", "description"}, Value: keyword})
 	}

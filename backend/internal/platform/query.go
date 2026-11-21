@@ -267,9 +267,190 @@ func renderSupabaseFilter(filter Filter) (string, string, error) {
 	}
 }
 
+type Embed struct {
+	Key     string
+	Table   string
+	Local   string
+	Remote  string
+	Many    bool
+	Columns []string
+	Nested  []Embed
+}
+
 type SQLQuery struct {
 	Text string
 	Args []any
+}
+
+// PrepareSelect separates allowlisted resource embeds from ordinary columns.
+// Unknown nesting stays rejected. There is no arbitrary join syntax.
+func PrepareSelect(q Query) (Query, []Embed, error) {
+	parts := splitSelect(q.Select)
+	columns := make([]string, 0, len(parts))
+	embeds := make([]Embed, 0)
+	for _, part := range parts {
+		if !strings.Contains(part, "(") {
+			columns = append(columns, part)
+			continue
+		}
+		embed, err := parseEmbed(q.Table, part)
+		if err != nil {
+			return Query{}, nil, err
+		}
+		embeds = append(embeds, embed)
+		if !containsColumn(columns, embed.Local) {
+			columns = append(columns, embed.Local)
+		}
+	}
+	q.Select = strings.Join(columns, ",")
+	return q, embeds, nil
+}
+
+func splitSelect(input string) []string {
+	parts := []string{}
+	depth := 0
+	start := 0
+	for i, r := range input {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		case ',':
+			if depth == 0 {
+				if part := strings.TrimSpace(input[start:i]); part != "" {
+					parts = append(parts, part)
+				}
+				start = i + 1
+			}
+		}
+	}
+	if part := strings.TrimSpace(input[start:]); part != "" {
+		parts = append(parts, part)
+	}
+	return parts
+}
+
+func parseEmbed(parent, token string) (Embed, error) {
+	alias, table, hint, inner, ok := embedParts(token)
+	if !ok {
+		return Embed{}, invalid("自建数据库暂不支持嵌套资源查询")
+	}
+	spec, ok := embedSpec(parent, alias, table, hint)
+	if !ok {
+		return Embed{}, invalid("自建数据库暂不支持嵌套资源查询")
+	}
+	columns, nested, err := parseEmbedFields(table, inner, spec.columns)
+	if err != nil {
+		return Embed{}, err
+	}
+	for _, child := range nested {
+		if !containsColumn(columns, child.Local) {
+			columns = append(columns, child.Local)
+		}
+	}
+	spec.embed.Columns = columns
+	spec.embed.Nested = nested
+	return spec.embed, nil
+}
+
+type resolvedEmbed struct {
+	embed   Embed
+	columns map[string]struct{}
+}
+
+func embedParts(token string) (alias, table, hint, inner string, ok bool) {
+	open := strings.Index(token, "(")
+	if open < 0 || !strings.HasSuffix(token, ")") {
+		return "", "", "", "", false
+	}
+	head := token[:open]
+	inner = token[open+1 : len(token)-1]
+	if name, rest, found := strings.Cut(head, ":"); found {
+		alias = name
+		head = rest
+	}
+	if name, rest, found := strings.Cut(head, "!"); found {
+		table = name
+		hint = rest
+	} else {
+		table = head
+	}
+	if alias == "" {
+		alias = table
+	}
+	if table == "" || strings.ContainsAny(alias+table+hint, " ,)*") {
+		return "", "", "", "", false
+	}
+	return alias, table, hint, inner, true
+}
+
+func embedSpec(parent, alias, table, hint string) (resolvedEmbed, bool) {
+	type key struct{ parent, alias, table, hint string }
+	specs := map[key]resolvedEmbed{
+		{"posts", "author", "user_profiles", "fk_user_profiles_posts"}:                   one("author", "user_profiles", "author_id", "id", "username", "display_name", "avatar_url", "bio"),
+		{"post_cates", "post_cate_relations", "post_cate_relations", ""}:                 many("post_cate_relations", "post_cate_relations", "id", "cate_id", "post_id", "cate_id"),
+		{"post_cate_relations", "posts", "posts", ""}:                                    one("posts", "posts", "post_id", "id", "id", "title", "slug", "excerpt", "banner", "published", "is_public", "created_at", "author_id"),
+		{"post_cate_relations", "post_cates", "post_cates", ""}:                          one("post_cates", "post_cates", "cate_id", "id", "id", "name", "slug", "description"),
+		{"post_comments", "user_profiles", "user_profiles", "fk_post_comments_user"}:     one("user_profiles", "user_profiles", "user_id", "id", "id", "username", "display_name", "avatar_url"),
+		{"interview_question", "interview_question_tags", "interview_question_tags", ""}: many("interview_question_tags", "interview_question_tags", "id", "question_id", "question_id", "tag_id"),
+		{"interview_question_tags", "interview_tags", "interview_tags", ""}:              one("interview_tags", "interview_tags", "tag_id", "id", "id", "name"),
+		{"interview_question", "interview_collections", "interview_collections", ""}:     one("interview_collections", "interview_collections", "collection_id", "id", "id", "title"),
+		{"course_enrollments", "courses", "courses", ""}:                                 one("courses", "courses", "course_id", "id", "id", "title", "description", "cover_image_url", "price", "is_free"),
+		{"lesson_progress", "lessons", "lessons", ""}:                                    one("lessons", "lessons", "lesson_id", "id", "id", "title"),
+		{"lesson_progress", "courses", "courses", ""}:                                    one("courses", "courses", "course_id", "id", "id", "title"),
+		{"interview_question_favorites", "interview_question", "interview_question", ""}: one("interview_question", "interview_question", "question_id", "id", "id", "title", "content", "difficulty", "collection_id"),
+		{"interview_question_submissions", "user_profiles", "user_profiles", ""}:         one("user_profiles", "user_profiles", "user_id", "id", "id", "username", "display_name", "avatar_url"),
+	}
+	spec, ok := specs[key{parent, alias, table, hint}]
+	return spec, ok
+}
+
+func one(key, table, local, remote string, columns ...string) resolvedEmbed {
+	return relation(key, table, local, remote, false, columns...)
+}
+
+func many(key, table, local, remote string, columns ...string) resolvedEmbed {
+	return relation(key, table, local, remote, true, columns...)
+}
+
+func relation(key, table, local, remote string, isMany bool, columns ...string) resolvedEmbed {
+	allowed := map[string]struct{}{}
+	for _, column := range columns {
+		allowed[column] = struct{}{}
+	}
+	return resolvedEmbed{embed: Embed{Key: key, Table: table, Local: local, Remote: remote, Many: isMany}, columns: allowed}
+}
+
+func parseEmbedFields(table, inner string, allowed map[string]struct{}) ([]string, []Embed, error) {
+	columns := []string{}
+	nested := []Embed{}
+	for _, part := range splitSelect(inner) {
+		if strings.Contains(part, "(") {
+			child, err := parseEmbed(table, part)
+			if err != nil {
+				return nil, nil, err
+			}
+			nested = append(nested, child)
+			continue
+		}
+		if _, ok := allowed[part]; !ok || !identPattern.MatchString(part) {
+			return nil, nil, invalid("自建数据库暂不支持嵌套资源查询")
+		}
+		columns = append(columns, part)
+	}
+	return columns, nested, nil
+}
+
+func containsColumn(columns []string, column string) bool {
+	for _, item := range columns {
+		if item == column {
+			return true
+		}
+	}
+	return false
 }
 
 // SQL renders a parameterized statement. Table and column names are allowlisted
@@ -343,6 +524,17 @@ func SQL(q Query, countOnly bool) (SQLQuery, error) {
 	return SQLQuery{Text: b.String(), Args: args}, nil
 }
 
+func sqlBound(value string) any {
+	switch value {
+	case "true":
+		return true
+	case "false":
+		return false
+	default:
+		return value
+	}
+}
+
 func queryExplicitlyAllowsContact(q Query) bool {
 	for _, filter := range q.Filters {
 		if filter.Column == "id" && filter.Op == "eq" && IsUUID(filter.Value) {
@@ -360,7 +552,7 @@ func renderSQLFilter(filter Filter, args *[]any) (string, []any, error) {
 		}
 		op := map[string]string{"eq": "=", "neq": "<>", "gte": ">=", "lt": "<"}[filter.Op]
 		placeholder := "$" + strconv.Itoa(len(*args)+1)
-		return filter.Column + " " + op + " " + placeholder, []any{filter.Value}, nil
+		return filter.Column + " " + op + " " + placeholder, []any{sqlBound(filter.Value)}, nil
 	case "is":
 		if filter.Value == "null" {
 			return filter.Column + " IS NULL", nil, nil
