@@ -7,7 +7,21 @@ import (
 	"time"
 )
 
-func (s *Service) InterviewHome(ctx context.Context, caller Caller, tagSlug string) (map[string]any, error) {
+func (s *Service) InterviewHome(ctx context.Context, caller Caller, tagSlug, jobSlug string) (map[string]any, error) {
+	job, ok := interviewJob(jobSlug)
+	if !ok {
+		return nil, invalid("岗位不存在")
+	}
+	if job["slug"] != "programmer" {
+		return map[string]any{
+			"jobs":           interviewJobs,
+			"job":            job,
+			"tags":           []map[string]any{},
+			"collections":    []map[string]any{},
+			"questionCounts": map[string]int{},
+			"effectiveTag":   "",
+		}, nil
+	}
 	tags, err := s.many(ctx, caller, Query{
 		Table:  "interview_tags",
 		Select: "id,name,slug,sort,created_at",
@@ -51,7 +65,7 @@ func (s *Service) InterviewHome(ctx context.Context, caller Caller, tagSlug stri
 			if len(ids) > 0 {
 				collections, err = s.many(ctx, caller, Query{
 					Table:   "interview_collections",
-					Select:  "id,title,description,cover_image,sort,created_at",
+					Select:  "id,title,description,icon,sort,created_at",
 					Filters: []Filter{{Column: "id", Op: "in", Values: ids}},
 					Orders:  []Order{{Column: "sort"}, {Column: "created_at", Desc: true}},
 					Limit:   200,
@@ -85,6 +99,8 @@ func (s *Service) InterviewHome(ctx context.Context, caller Caller, tagSlug stri
 		}
 	}
 	return map[string]any{
+		"jobs":           interviewJobs,
+		"job":            job,
 		"tags":           tags.Rows,
 		"collections":    collections.Rows,
 		"questionCounts": counts,

@@ -7,7 +7,7 @@ import (
 )
 
 func (h *Handler) interviewHome(c *gin.Context, caller Caller) {
-	row, err := h.service.InterviewHome(c.Request.Context(), caller, c.Query("tag"))
+	row, err := h.service.InterviewHome(c.Request.Context(), caller, c.Query("tag"), c.Query("role"))
 	writeResult(c, row, err)
 }
 
