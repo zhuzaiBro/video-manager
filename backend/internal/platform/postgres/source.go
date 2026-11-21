@@ -21,6 +21,8 @@ type Source struct {
 	db *sql.DB
 }
 
+func (s *Source) Pool() *sql.DB { return s.db }
+
 func Open(databaseURL string) (*Source, error) {
 	db, err := sql.Open("pgx", databaseURL)
 	if err != nil {

@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/zood/video-manager/internal/platform/content"
 )
 
 const (
@@ -26,6 +28,7 @@ type Service struct {
 	webhookSecret  string
 	setupSecret    string
 	durationLookup func(context.Context, string) int
+	catalog        *content.Catalog
 }
 
 func NewService(source Source, storage ObjectStorage, dataSource string) *Service {
@@ -46,6 +49,7 @@ func (s *Service) SetTelegramSecrets(webhook, setup string) {
 func (s *Service) SetDurationLookup(lookup func(context.Context, string) int) {
 	s.durationLookup = lookup
 }
+func (s *Service) SetCatalog(catalog content.Catalog) { s.catalog = &catalog }
 
 func (s *Service) requireUser(caller Caller) error {
 	if !caller.SignedIn() || !IsUUID(caller.UserID) {
@@ -89,6 +93,13 @@ func (s *Service) many(ctx context.Context, caller Caller, query Query) (Result,
 }
 
 func (s *Service) ListPosts(ctx context.Context, caller Caller, limit int) (Result, error) {
+	if s.catalog != nil {
+		rows, count, err := s.catalog.ListPosts(ctx, caller.UserID, clampLimit(limit, 10, 50))
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Rows: rows, Count: &count}, nil
+	}
 	return s.many(ctx, caller, Query{
 		Table:  "posts",
 		Select: "id,title,slug,excerpt,banner,content,published,is_public,created_at,updated_at,author_id,author:user_profiles!fk_user_profiles_posts(username,display_name,avatar_url)",
@@ -106,6 +117,28 @@ func (s *Service) GetPost(ctx context.Context, caller Caller, slug string) (map[
 	slug = strings.TrimSpace(slug)
 	if slug == "" || len(slug) > 200 {
 		return nil, invalid("文章标识不合法")
+	}
+	if s.catalog != nil {
+		column := "slug"
+		if IsUUID(slug) {
+			column = "id"
+		} else if !safeScalar(slug) {
+			return nil, invalid("文章标识不合法")
+		}
+		row, err := s.catalog.FindPublishedPost(ctx, caller.UserID, column, slug)
+		if err != nil {
+			return nil, err
+		}
+		if row == nil && IsUUID(slug) {
+			row, err = s.catalog.FindPublishedPost(ctx, caller.UserID, "slug", slug)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if row == nil {
+			return nil, notFound("文章不存在")
+		}
+		return row, nil
 	}
 	filters := []Filter{
 		{Column: "published", Op: "eq", Value: "true"},
@@ -149,6 +182,14 @@ func (s *Service) GetPost(ctx context.Context, caller Caller, slug string) (map[
 }
 
 func (s *Service) ListCategories(ctx context.Context, caller Caller) (Result, error) {
+	if s.catalog != nil {
+		rows, err := s.catalog.ListCategories(ctx, caller.UserID)
+		if err != nil {
+			return Result{}, err
+		}
+		count := len(rows)
+		return Result{Rows: rows, Count: &count}, nil
+	}
 	return s.many(ctx, caller, Query{
 		Table:  "post_cates",
 		Select: "id,name,slug,description,created_at,post_cate_relations(post_id)",
@@ -160,6 +201,16 @@ func (s *Service) ListCategories(ctx context.Context, caller Caller) (Result, er
 func (s *Service) GetCategory(ctx context.Context, caller Caller, slug string) (map[string]any, error) {
 	if !safeFilterValue(slug) {
 		return nil, invalid("分类标识不合法")
+	}
+	if s.catalog != nil {
+		row, err := s.catalog.GetCategory(ctx, caller.UserID, slug)
+		if err != nil {
+			return nil, err
+		}
+		if row == nil {
+			return nil, notFound("分类不存在")
+		}
+		return row, nil
 	}
 	category, err := s.one(ctx, caller, Query{
 		Table:   "post_cates",
@@ -348,6 +399,13 @@ func (s *Service) ListJobs(ctx context.Context, caller Caller, keyword string, r
 	}
 	if page > 400 {
 		page = 400
+	}
+	if s.catalog != nil {
+		rows, count, err := s.catalog.ListJobs(ctx, caller.UserID, keyword, remoteOnly, page, jobPageSize)
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Rows: rows, Count: &count}, nil
 	}
 	// Public job policy is USING (true). status defaults to 0 and is not a visibility flag.
 	filters := []Filter{}

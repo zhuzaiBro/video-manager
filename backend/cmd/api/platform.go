@@ -10,7 +10,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/zood/video-manager/internal/auth"
 	"github.com/zood/video-manager/internal/config"
+	"github.com/zood/video-manager/internal/gormplus"
 	"github.com/zood/video-manager/internal/platform"
+	"github.com/zood/video-manager/internal/platform/content"
 	platformpg "github.com/zood/video-manager/internal/platform/postgres"
 	"github.com/zood/video-manager/internal/repository"
 )
@@ -35,6 +37,17 @@ func registerPlatform(r *gin.Engine, cfg *config.Config, validator *auth.Validat
 	}
 	const dataSource = "postgres"
 	service := platform.NewService(pg, nil, dataSource)
+	posts, err := gormplus.Use(pg.Pool(), gormplus.Platform)
+	if err != nil {
+		log.Printf("warning: platform postgres unavailable, API disabled: %v", err)
+		return
+	}
+	catalog, err := content.New(posts)
+	if err != nil {
+		log.Printf("warning: platform postgres unavailable, API disabled: %v", err)
+		return
+	}
+	service.SetCatalog(catalog)
 	service.SetPrivileged(pg)
 	service.SetTelegramSecrets(cfg.TelegramWebhookSecret, cfg.TelegramSetupSecret)
 	if cfg.TelegramBotToken != "" {
