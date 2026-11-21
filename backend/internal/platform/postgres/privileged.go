@@ -123,7 +123,27 @@ func (s *Source) ListAuthUsers(ctx context.Context) ([]platform.AuthAccount, err
 }
 
 func (s *Source) ListProfiles(ctx context.Context) ([]map[string]any, error) {
-	return s.adminRows(ctx, `SELECT platform.admin_list_profiles()`)
+	caller, err := callerFrom(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result, err := s.Select(ctx, caller, platform.Query{
+		Table:  "user_profiles",
+		Select: "id,username,display_name,avatar_url,vip_level,is_admin,created_at",
+		Orders: []platform.Order{{Column: "created_at", Desc: true}, {Column: "id"}},
+		Limit:  200,
+		Count:  true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result.Count != nil && *result.Count > len(result.Rows) {
+		return nil, platform.NewError(http.StatusInternalServerError, "RESULT_TRUNCATED", "用户数量超过可读取上限")
+	}
+	if result.Rows == nil {
+		return []map[string]any{}, nil
+	}
+	return result.Rows, nil
 }
 
 func (s *Source) ListWatchLogsSince(ctx context.Context, since time.Time) ([]map[string]any, error) {
@@ -131,14 +151,26 @@ func (s *Source) ListWatchLogsSince(ctx context.Context, since time.Time) ([]map
 	if err != nil {
 		return nil, err
 	}
-	var raw []byte
-	err = s.withScope(ctx, caller, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx, `SELECT platform.admin_watch_logs($1::timestamptz)`, since.UTC()).Scan(&raw)
+	result, err := s.Select(ctx, caller, platform.Query{
+		Table:  "video_access_logs",
+		Select: "user_id,video_id,watch_seconds,created_at",
+		Filters: []platform.Filter{{
+			Column: "created_at", Op: "gte", Value: since.UTC().Format(time.RFC3339),
+		}},
+		Orders: []platform.Order{{Column: "created_at", Desc: true}},
+		Limit:  200,
+		Count:  true,
 	})
 	if err != nil {
-		return nil, mapDB(err)
+		return nil, err
 	}
-	return decodeRows(raw)
+	if result.Count != nil && *result.Count > len(result.Rows) {
+		return nil, platform.NewError(http.StatusInternalServerError, "RESULT_TRUNCATED", "学习记录超过可读取上限")
+	}
+	if result.Rows == nil {
+		return []map[string]any{}, nil
+	}
+	return result.Rows, nil
 }
 
 func (s *Source) MarkConsultationPaid(ctx context.Context, requestID int, userID, paidAt string) error {
