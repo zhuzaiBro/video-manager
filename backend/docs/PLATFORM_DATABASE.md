@@ -10,17 +10,17 @@
 
 平台读写只有一条路径：现有 `/api/platform/*` handler 和 `platform.Service`，底下是 `internal/platform/postgres`。进程不再创建 Supabase HTTP 客户端。视频上传和播放仍用原来的 `DATABASE_URL` 连接池，平台用 `PLATFORM_DATABASE_URL`，两个地址相同则平台接口不启动。
 
-调用者身份仍由现有 JWT 校验完成。数据库事务里只把已验证的 `sub` 和 `role` 写进 `request.jwt.claims`，并 `SET LOCAL ROLE` 为 `authenticated` 或 `anon`，让恢复库里原有的 `auth.uid()` 生效。连接账号不能是超级用户，也不能 `BYPASSRLS`。
+登录只使用新的 Supabase Auth 项目。后端校验 `iss`、`aud=authenticated` 和签名：非对称密钥来自该项目的 JWKS，旧的共享密钥只接受 HS256。`amnksdnwvwmmmvqoxzyj` 一律拒绝。事务里只把已验证的 `sub` 和 `role` 写进 `request.jwt.claims`。管理员身份只读本地 `user_profiles.is_admin`，不读 `user_metadata`。
 
-密码登录读取 `auth.users.encrypted_password` 只发生在 `platform.password_hash_for_email`，该函数不授权给 `anon` 或 `authenticated`。注册不写入 `email_confirmed_at`。跨用户会员、邀请、资料补齐和学习统计仍先做原来的身份检查，再调用同名数据库函数，函数内部用 `auth.uid()` 复核管理员或本人，并且不会接受客户端提交的 `is_admin`。
+跨用户会员、邀请、资料补齐和学习统计仍先做原来的身份检查，再调用数据库函数，函数内部用 `auth.uid()` 复核管理员或本人，并且不会接受客户端提交的 `is_admin`。
 
 | 变量 | 作用 |
 | --- | --- |
-| `PLATFORM_DATA_SOURCE` | 必须是 `postgres`，其他值不启用平台 API |
+| `SUPABASE_URL` | 只能是 `https://gmfuorleragagsqbkajh.supabase.co` |
+| `SUPABASE_JWKS_URL` | 可选，默认同项目 `.../auth/v1/.well-known/jwks.json` |
+| `SUPABASE_JWT_SECRET` | 仅当该项目仍用 HS256 时需要 |
+| `PLATFORM_DATA_SOURCE` | 必须是 `postgres` |
 | `PLATFORM_DATABASE_URL` | 本地业务库，不能等于视频库 |
-| `SUPABASE_JWT_SECRET` | 只在本地校验会话 JWT，不访问 Supabase |
-| `DATABASE_URL` | 只给现有视频库 |
+| `DATABASE_URL` | 现有视频库，不要改指到空的 zood 库 |
 
-`backend/migrations/003_platform_independent.sql` 使用 `app.user_id`，不要应用到已经有 `auth.uid()` 策略的恢复库。
-
-登录、OAuth、Web3、Storage 上传和客服 Realtime 仍由现有前端 Supabase SDK 触发。它们不是这次数据查询边界的一部分，见发布说明，不在这里再做一套认证框架。
+`003_platform_independent.sql` 不要应用到已有 `auth.uid()` 策略的恢复库。Storage、Realtime 和视频库不迁到新 Supabase。

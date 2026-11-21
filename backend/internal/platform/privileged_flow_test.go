@@ -95,7 +95,10 @@ func (s *selfSource) FetchSelf(context.Context, Caller) (AuthAccount, error) { r
 
 func privilegedRouter(source Source, privileged Privileged) *gin.Engine {
 	gin.SetMode(gin.TestMode)
-	validator := auth.NewValidator(&config.Config{SupabaseJWTSecret: "test-secret"})
+	validator := auth.NewValidator(&config.Config{
+		SupabaseJWTSecret: "test-secret",
+		SupabaseURL:       "https://gmfuorleragagsqbkajh.supabase.co",
+	})
 	service := NewService(source, nil, "supabase")
 	service.SetPrivileged(privileged)
 	service.SetTelegramSecrets("hook-secret", "setup-secret")

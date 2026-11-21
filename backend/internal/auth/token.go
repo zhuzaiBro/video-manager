@@ -18,6 +18,7 @@ var (
 )
 
 const tokenTypeTencent = "tencent"
+const retiredAuthProject = "amnksdnwvwmmmvqoxzyj"
 
 type SupabaseClaims struct {
 	jwt.RegisteredClaims
@@ -40,13 +41,28 @@ type Validator struct {
 	supabaseSecret string
 	jwtSecret      string
 	tokenExpire    time.Duration
+	issuer         string
+	jwksURL        string
+	keys           *jwksCache
 }
 
 func NewValidator(cfg *config.Config) *Validator {
+	issuer, jwksURL := "", ""
+	base := strings.TrimRight(cfg.SupabaseURL, "/")
+	if base != "" && !strings.Contains(base, retiredAuthProject) {
+		issuer = base + "/auth/v1"
+		jwksURL = issuer + "/.well-known/jwks.json"
+	}
+	if cfg.SupabaseJWKSURL != "" && !strings.Contains(cfg.SupabaseJWKSURL, retiredAuthProject) {
+		jwksURL = cfg.SupabaseJWKSURL
+	}
 	return &Validator{
 		supabaseSecret: cfg.SupabaseJWTSecret,
 		jwtSecret:      cfg.JWTSecret,
 		tokenExpire:    time.Duration(cfg.TokenExpireSec) * time.Second,
+		issuer:         issuer,
+		jwksURL:        jwksURL,
+		keys:           &jwksCache{},
 	}
 }
 
@@ -73,50 +89,37 @@ func (v *Validator) ResolveUser(tokenString string) (*ResolveResult, error) {
 }
 
 func (v *Validator) ParseSupabaseToken(tokenString string) (*SupabaseClaims, error) {
-	if v.supabaseSecret == "" {
+	if v.issuer == "" {
 		return nil, ErrMissingSecret
 	}
-
 	token, err := jwt.ParseWithClaims(tokenString, &SupabaseClaims{}, func(token *jwt.Token) (interface{}, error) {
-		if token.Method != jwt.SigningMethodHS256 {
+		switch token.Method.Alg() {
+		case jwt.SigningMethodHS256.Alg():
+			if v.supabaseSecret == "" {
+				return nil, fmt.Errorf("unexpected signing method: HS256")
+			}
+			return []byte(v.supabaseSecret), nil
+		case jwt.SigningMethodES256.Alg(), jwt.SigningMethodRS256.Alg():
+			kid, _ := token.Header["kid"].(string)
+			return v.publicKey(kid)
+		default:
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		return []byte(v.supabaseSecret), nil
-	})
+	}, jwt.WithIssuer(v.issuer), jwt.WithAudience("authenticated"), jwt.WithValidMethods([]string{"HS256", "ES256", "RS256"}))
 	if err != nil {
 		if errors.Is(err, jwt.ErrTokenExpired) {
 			return nil, ErrTokenExpired
 		}
 		return nil, fmt.Errorf("%w: %v", ErrInvalidToken, err)
 	}
-
 	claims, ok := token.Claims.(*SupabaseClaims)
-	if !ok || !token.Valid || claims.Subject == "" {
+	if !ok || !token.Valid || claims.Subject == "" || claims.Role != "authenticated" {
+		return nil, ErrInvalidToken
+	}
+	if strings.Contains(claims.Issuer, retiredAuthProject) {
 		return nil, ErrInvalidToken
 	}
 	return claims, nil
-}
-
-func (v *Validator) IssueSessionToken(userID, email string) (string, int64, error) {
-	if v.supabaseSecret == "" {
-		return "", 0, ErrMissingSecret
-	}
-	expireAt := time.Now().Add(7 * 24 * time.Hour)
-	claims := SupabaseClaims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   userID,
-			ExpiresAt: jwt.NewNumericDate(expireAt),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    "zood-platform",
-		},
-		Email: email,
-		Role:  "authenticated",
-	}
-	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(v.supabaseSecret))
-	if err != nil {
-		return "", 0, err
-	}
-	return signed, expireAt.Unix(), nil
 }
 
 func (v *Validator) IssueTencentToken(userID, email string) (string, int64, error) {

@@ -29,7 +29,6 @@ func NewHandler(service *Service, validator *auth.Validator) *Handler {
 func (h *Handler) SetBlob(blob BlobStore) { h.blob = blob }
 
 func (h *Handler) Register(r gin.IRoutes) {
-	h.registerAuth(r)
 	r.POST("/api/platform/uploads", h.required(h.upload))
 	r.GET("/api/platform/health", h.health)
 	r.GET("/api/platform/posts", h.optional(h.listPosts))

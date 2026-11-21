@@ -5,41 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
-	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/zood/video-manager/internal/platform"
 )
-
-func (s *Source) PasswordAccount(ctx context.Context, email string) (id, storedEmail, hash string, created time.Time, ok bool, err error) {
-	email = strings.ToLower(strings.TrimSpace(email))
-	if email == "" {
-		return "", "", "", time.Time{}, false, nil
-	}
-	err = s.inTx(ctx, func(tx *sql.Tx) error {
-		scanErr := tx.QueryRowContext(ctx, `SELECT id::text, email, encrypted_password, created_at FROM platform.password_hash_for_email($1)`, email).
-			Scan(&id, &storedEmail, &hash, &created)
-		if errors.Is(scanErr, sql.ErrNoRows) {
-			return nil
-		}
-		if scanErr != nil {
-			return scanErr
-		}
-		ok = true
-		return nil
-	})
-	return id, storedEmail, hash, created, ok, err
-}
-
-func (s *Source) RegisterPassword(ctx context.Context, id, email, hash string) error {
-	err := s.inTx(ctx, func(tx *sql.Tx) error {
-		_, execErr := tx.ExecContext(ctx, `SELECT platform.register_password_user($1::uuid, $2, $3)`, id, strings.ToLower(strings.TrimSpace(email)), hash)
-		return execErr
-	})
-	return mapDB(err)
-}
 
 func (s *Source) FetchSelf(ctx context.Context, caller platform.Caller) (platform.AuthAccount, error) {
 	var account platform.AuthAccount

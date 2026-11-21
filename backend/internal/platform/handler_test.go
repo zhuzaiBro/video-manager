@@ -44,7 +44,10 @@ func (f *fakeSource) Write(_ context.Context, _ Caller, method string, query Que
 
 func testRouter(source *fakeSource) *gin.Engine {
 	gin.SetMode(gin.TestMode)
-	validator := auth.NewValidator(&config.Config{SupabaseJWTSecret: "test-secret"})
+	validator := auth.NewValidator(&config.Config{
+		SupabaseJWTSecret: "test-secret",
+		SupabaseURL:       "https://gmfuorleragagsqbkajh.supabase.co",
+	})
 	r := gin.New()
 	NewHandler(NewService(source, nil, "supabase"), validator).Register(r)
 	return r
@@ -55,6 +58,8 @@ func signUser(t *testing.T, userID string) string {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, auth.SupabaseClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
+			Issuer:    "https://gmfuorleragagsqbkajh.supabase.co/auth/v1",
+			Audience:  []string{"authenticated"},
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		},
 		Role: "authenticated",
