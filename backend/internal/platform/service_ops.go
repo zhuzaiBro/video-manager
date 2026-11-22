@@ -367,11 +367,16 @@ func (s *Service) HandleTelegram(ctx context.Context, secret string, body []byte
 	}); err != nil {
 		return http.StatusBadGateway, nil, err
 	}
+	s.publishSupportMessage(ctx, map[string]any{
+		"id": siteID, "session_id": sessionID, "sender_type": "admin", "content": content,
+		"created_at": time.Now().UTC().Format(time.RFC3339Nano),
+	})
 	return http.StatusOK, map[string]any{"ok": true}, nil
 }
 
 func (s *Service) forwardUserMessage(ctx context.Context, siteMessageID, sessionID, content, pageURL string, caller Caller) int {
-	if s.privileged == nil || s.telegram == nil {
+	sender := s.telegramSender(ctx)
+	if s.privileged == nil || sender == nil {
 		return 0
 	}
 	chats, err := s.privileged.ListActiveTelegramAdmins(ctx)
@@ -389,7 +394,7 @@ func (s *Service) forwardUserMessage(ctx context.Context, siteMessageID, session
 	text += "\n\n" + content + "\n\n请直接回复这条消息。"
 	forwarded := 0
 	for _, chatID := range chats {
-		messageID, err := s.telegram.Send(ctx, chatID, text)
+		messageID, err := sender.Send(ctx, chatID, text)
 		if err != nil {
 			continue
 		}
@@ -403,8 +408,9 @@ func (s *Service) forwardUserMessage(ctx context.Context, siteMessageID, session
 }
 
 func (s *Service) replyTelegram(ctx context.Context, chatID int64, text string) {
-	if s.telegram != nil {
-		_, _ = s.telegram.Send(ctx, chatID, text)
+	sender := s.telegramSender(ctx)
+	if sender != nil {
+		_, _ = sender.Send(ctx, chatID, text)
 	}
 }
 

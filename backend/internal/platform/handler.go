@@ -55,6 +55,9 @@ func (h *Handler) Register(r gin.IRoutes) {
 	r.DELETE("/api/platform/me/favorites/:questionId", h.required(h.removeFavorite))
 	r.GET("/api/platform/messages", h.optional(h.listMessages))
 	r.POST("/api/platform/messages", h.optional(h.createMessage))
+	r.POST("/api/platform/messages/realtime", h.optional(h.supportRealtime))
+	r.GET("/api/platform/admin/support/telegram", h.required(h.getTelegramConfig))
+	r.PUT("/api/platform/admin/support/telegram", h.required(h.putTelegramConfig))
 	r.GET("/api/platform/me/progress", h.optional(h.listProgress))
 	r.POST("/api/platform/me/progress", h.required(h.saveProgress))
 	r.POST("/api/platform/course-purchase-requests", h.optional(h.purchase))
@@ -253,6 +256,39 @@ func (h *Handler) createMessage(c *gin.Context, caller Caller) {
 	forwarded, _ := row["forwarded"].(int)
 	delete(row, "forwarded")
 	writeResult(c, gin.H{"message": row, "forwarded": forwarded}, nil)
+}
+
+func (h *Handler) supportRealtime(c *gin.Context, caller Caller) {
+	if c.GetHeader("X-Zood-Request") != supportRealtimeHeader {
+		writeErr(c, NewError(http.StatusForbidden, "CSRF_REJECTED", "请求来源未通过校验"))
+		return
+	}
+	body, err := readBody(c)
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	result, err := h.service.SupportRealtimeToken(c.Request.Context(), caller, stringField(body, "sessionId"), stringField(body, "scope"))
+	writeResult(c, result, err)
+}
+
+func (h *Handler) getTelegramConfig(c *gin.Context, caller Caller) {
+	view, err := h.service.GetTelegramConfig(c.Request.Context(), caller)
+	writeResult(c, gin.H{"telegramBotToken": view}, err)
+}
+
+func (h *Handler) putTelegramConfig(c *gin.Context, caller Caller) {
+	if c.GetHeader("X-Zood-Request") != supportConfigHeader {
+		writeErr(c, NewError(http.StatusForbidden, "CSRF_REJECTED", "请求来源未通过校验"))
+		return
+	}
+	body, err := readBody(c)
+	if err != nil {
+		writeErr(c, err)
+		return
+	}
+	view, err := h.service.UpdateTelegramConfig(c.Request.Context(), caller, body)
+	writeResult(c, gin.H{"telegramBotToken": view}, err)
 }
 
 func (h *Handler) listProgress(c *gin.Context, caller Caller) {

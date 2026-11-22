@@ -49,6 +49,23 @@ func registerPlatform(r *gin.Engine, cfg *config.Config, validator *auth.Validat
 	}
 	service.SetCatalog(catalog)
 	service.SetPrivileged(pg)
+	configKey := platform.DecodeKey(cfg.SupportConfigKey)
+	if cfg.SupportConfigKey != "" && configKey == nil {
+		log.Println("warning: SUPPORT_CONFIG_KEY is not a 32-byte base64 value")
+	}
+	channelKey := platform.DecodeKey(cfg.SupportChannelKey)
+	if cfg.SupportChannelKey != "" && channelKey == nil {
+		log.Println("warning: SUPPORT_CHANNEL_KEY is not a 32-byte base64 value")
+	}
+	service.SetSupport(platform.SupportConfig{
+		Store:          pg,
+		ConfigKey:      configKey,
+		ChannelKey:     channelKey,
+		JWTSecret:      cfg.SupabaseJWTSecret,
+		Issuer:         strings.TrimRight(cfg.SupabaseURL, "/") + "/auth/v1",
+		SupabaseURL:    cfg.SupabaseURL,
+		ServiceRoleKey: cfg.SupabaseServiceRoleKey,
+	})
 	service.SetTelegramSecrets(cfg.TelegramWebhookSecret, cfg.TelegramSetupSecret)
 	if cfg.TelegramBotToken != "" {
 		service.SetTelegram(platform.NewTelegram(cfg.TelegramBotToken))

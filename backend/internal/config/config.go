@@ -71,6 +71,8 @@ type Config struct {
 	TelegramBotToken       string
 	TelegramWebhookSecret  string
 	TelegramSetupSecret    string
+	SupportConfigKey       string
+	SupportChannelKey      string
 }
 
 func Load() *Config {
@@ -121,6 +123,8 @@ func Load() *Config {
 		TelegramBotToken:       getEnv("TELEGRAM_BOT_TOKEN", ""),
 		TelegramWebhookSecret:  getEnv("TELEGRAM_WEBHOOK_SECRET", ""),
 		TelegramSetupSecret:    getEnv("TELEGRAM_SETUP_SECRET", ""),
+		SupportConfigKey:       getEnv("SUPPORT_CONFIG_KEY", ""),
+		SupportChannelKey:      getEnv("SUPPORT_CHANNEL_KEY", ""),
 	}
 
 	if cfg.SupabaseJWTSecret == "" {

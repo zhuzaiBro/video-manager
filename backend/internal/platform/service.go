@@ -27,6 +27,7 @@ type Service struct {
 	telegram       TelegramSender
 	webhookSecret  string
 	setupSecret    string
+	support        SupportConfig
 	durationLookup func(context.Context, string) int
 	catalog        *content.Catalog
 }
@@ -668,8 +669,8 @@ func (s *Service) CreateMessage(ctx context.Context, caller Caller, sessionID, c
 	if content == "" || len(content) > 2000 {
 		return nil, invalid("消息内容不合法")
 	}
-	if caller.SignedIn() && sessionID != caller.UserID {
-		return nil, forbidden("会话身份不匹配")
+	if err := s.authorizeSupportSession(ctx, caller, sessionID, false); err != nil {
+		return nil, err
 	}
 	since := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
 	recent, err := s.many(ctx, caller, Query{
@@ -713,6 +714,7 @@ func (s *Service) CreateMessage(ctx context.Context, caller Caller, sessionID, c
 		return nil, forbidden("无权发送消息")
 	}
 	result.Rows[0]["pageUrl"] = pageURL
+	s.publishSupportMessage(ctx, result.Rows[0])
 	forwarded := s.forwardUserMessage(ctx, stringField(result.Rows[0], "id"), sessionID, content, pageURL, caller)
 	result.Rows[0]["forwarded"] = forwarded
 	return result.Rows[0], nil
@@ -722,10 +724,8 @@ func (s *Service) ListMessages(ctx context.Context, caller Caller, sessionID str
 	if !IsUUID(sessionID) {
 		return Result{}, invalid("会话标识不合法")
 	}
-	if caller.SignedIn() && sessionID != caller.UserID {
-		if err := s.requireAdmin(ctx, caller); err != nil {
-			return Result{}, err
-		}
+	if err := s.authorizeSupportSession(ctx, caller, sessionID, true); err != nil {
+		return Result{}, err
 	}
 	return s.many(ctx, caller, Query{
 		Table:   "messages",

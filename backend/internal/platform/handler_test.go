@@ -16,10 +16,11 @@ import (
 )
 
 type fakeSource struct {
-	mu      sync.Mutex
-	queries []Query
-	writes  []storedWrite
-	tables  map[string][]map[string]any
+	mu       sync.Mutex
+	queries  []Query
+	writes   []storedWrite
+	tables   map[string][]map[string]any
+	writeRow map[string]any
 }
 
 type storedWrite struct {
@@ -39,7 +40,11 @@ func (f *fakeSource) Write(_ context.Context, _ Caller, method string, query Que
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.writes = append(f.writes, storedWrite{Method: method, Query: query, Payload: payload})
-	return Result{Rows: []map[string]any{{"id": "ok"}}}, nil
+	row := map[string]any{"id": "ok"}
+	if f.writeRow != nil {
+		row = f.writeRow
+	}
+	return Result{Rows: []map[string]any{row}}, nil
 }
 
 func testRouter(source *fakeSource) *gin.Engine {
