@@ -2,9 +2,9 @@ package platform
 
 import "strings"
 
-// Interview jobs are a fixed display list. Existing technical tags stay under
-// 程序员. The other jobs have no inferred questions until a collection is
-// explicitly assigned, so this list does not require a database migration.
+// Interview jobs are a fixed display list. Programmer collections still follow
+// the technical tags. Every other job returns only collections stored in
+// interview_collection_roles, never collections inferred from hot or web3 tags.
 var interviewJobs = []map[string]string{
 	{"slug": "programmer", "name": "程序员"},
 	{"slug": "design", "name": "设计"},
