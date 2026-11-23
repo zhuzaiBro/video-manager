@@ -13,12 +13,20 @@ func (s *Service) InterviewHome(ctx context.Context, caller Caller, tagSlug, job
 		return nil, invalid("岗位不存在")
 	}
 	if job["slug"] != "programmer" {
+		ids, err := s.assignedCollectionIDs(ctx, caller, job["slug"])
+		if err != nil {
+			return nil, err
+		}
+		collections, counts, err := s.interviewCollections(ctx, caller, ids)
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"jobs":           interviewJobs,
 			"job":            job,
 			"tags":           []map[string]any{},
-			"collections":    []map[string]any{},
-			"questionCounts": map[string]int{},
+			"collections":    collections,
+			"questionCounts": counts,
 			"effectiveTag":   "",
 		}, nil
 	}
@@ -31,13 +39,19 @@ func (s *Service) InterviewHome(ctx context.Context, caller Caller, tagSlug, job
 	if err != nil {
 		return nil, err
 	}
-	effective := strings.TrimSpace(tagSlug)
-	if effective == "" && len(tags.Rows) > 0 {
-		effective = stringField(tags.Rows[0], "slug")
+	requested := strings.TrimSpace(tagSlug)
+	defaultSlug := ""
+	if len(tags.Rows) > 0 {
+		defaultSlug = stringField(tags.Rows[0], "slug")
+	}
+	effective := requested
+	if effective == "" {
+		effective = defaultSlug
 	}
 	collections := Result{Rows: []map[string]any{}}
+	counts := map[string]int{}
 	if effective != "" {
-		tag, err := s.one(ctx, caller, Query{
+		tagRows, err := s.many(ctx, caller, Query{
 			Table:   "interview_tags",
 			Select:  "id,slug",
 			Filters: []Filter{{Column: "slug", Op: "eq", Value: effective}},
@@ -45,6 +59,13 @@ func (s *Service) InterviewHome(ctx context.Context, caller Caller, tagSlug, job
 		})
 		if err != nil {
 			return nil, err
+		}
+		var tag map[string]any
+		for _, row := range tagRows.Rows {
+			if stringField(row, "slug") == effective {
+				tag = row
+				break
+			}
 		}
 		if tag != nil {
 			relations, err := s.many(ctx, caller, Query{
@@ -58,44 +79,33 @@ func (s *Service) InterviewHome(ctx context.Context, caller Caller, tagSlug, job
 			}
 			ids := make([]string, 0, len(relations.Rows))
 			for _, row := range relations.Rows {
+				if stringField(row, "tag_id") != stringField(tag, "id") {
+					continue
+				}
 				if id := stringField(row, "collection_id"); IsUUID(id) {
 					ids = append(ids, id)
 				}
 			}
-			if len(ids) > 0 {
-				collections, err = s.many(ctx, caller, Query{
-					Table:   "interview_collections",
-					Select:  "id,title,description,icon,sort,created_at",
-					Filters: []Filter{{Column: "id", Op: "in", Values: ids}},
-					Orders:  []Order{{Column: "sort"}, {Column: "created_at", Desc: true}},
-					Limit:   200,
-				})
-				if err != nil {
-					return nil, err
-				}
+			collections.Rows, counts, err = s.interviewCollections(ctx, caller, ids)
+			if err != nil {
+				return nil, err
 			}
 		}
 	}
-	counts := map[string]int{}
-	if len(collections.Rows) > 0 {
-		ids := make([]string, 0, len(collections.Rows))
-		for _, row := range collections.Rows {
-			if id := stringField(row, "id"); IsUUID(id) {
-				ids = append(ids, id)
-			}
-		}
-		questions, err := s.many(ctx, caller, Query{
-			Table:   "interview_question",
-			Select:  "id,collection_id",
-			Filters: []Filter{{Column: "collection_id", Op: "in", Values: ids}},
-			Limit:   200,
-		})
+	// The default programmer list stays the hot tag. Explicit programmer rows
+	// are added only on that default view, so a web3-only collection is not
+	// pulled in, and neither is a collection assigned to another job.
+	if requested == "" || requested == defaultSlug {
+		assigned, err := s.assignedCollectionIDs(ctx, caller, "programmer")
 		if err != nil {
 			return nil, err
 		}
-		for _, row := range questions.Rows {
-			id := stringField(row, "collection_id")
-			counts[id] = counts[id] + 1
+		merged, added := mergeCollectionIDs(collectionIDs(collections.Rows, "id"), assigned)
+		if added {
+			collections.Rows, counts, err = s.interviewCollections(ctx, caller, merged)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	return map[string]any{
@@ -106,6 +116,122 @@ func (s *Service) InterviewHome(ctx context.Context, caller Caller, tagSlug, job
 		"questionCounts": counts,
 		"effectiveTag":   effective,
 	}, nil
+}
+
+func (s *Service) assignedCollectionIDs(ctx context.Context, caller Caller, role string) ([]string, error) {
+	relations, err := s.many(ctx, caller, Query{
+		Table:   "interview_collection_roles",
+		Select:  "collection_id,role_slug",
+		Filters: []Filter{{Column: "role_slug", Op: "eq", Value: role}},
+		Limit:   200,
+	})
+	if interviewRoleTableMissing(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(relations.Rows))
+	for _, row := range relations.Rows {
+		if stringField(row, "role_slug") != role {
+			continue
+		}
+		if id := stringField(row, "collection_id"); IsUUID(id) {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
+func (s *Service) interviewCollections(ctx context.Context, caller Caller, ids []string) ([]map[string]any, map[string]int, error) {
+	rows := []map[string]any{}
+	counts := map[string]int{}
+	if len(ids) == 0 {
+		return rows, counts, nil
+	}
+	wanted := map[string]struct{}{}
+	for _, id := range ids {
+		wanted[id] = struct{}{}
+	}
+	collections, err := s.many(ctx, caller, Query{
+		Table:   "interview_collections",
+		Select:  "id,title,description,icon,sort,created_at",
+		Filters: []Filter{{Column: "id", Op: "in", Values: ids}},
+		Orders:  []Order{{Column: "sort"}, {Column: "created_at", Desc: true}},
+		Limit:   200,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, row := range collections.Rows {
+		if _, ok := wanted[stringField(row, "id")]; ok {
+			rows = append(rows, row)
+		}
+	}
+	questions, err := s.many(ctx, caller, Query{
+		Table:   "interview_question",
+		Select:  "id,collection_id",
+		Filters: []Filter{{Column: "collection_id", Op: "in", Values: ids}},
+		Limit:   200,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, row := range questions.Rows {
+		id := stringField(row, "collection_id")
+		if _, ok := wanted[id]; ok {
+			counts[id] = counts[id] + 1
+		}
+	}
+	return rows, counts, nil
+}
+
+func collectionIDs(rows []map[string]any, column string) []string {
+	ids := make([]string, 0, len(rows))
+	seen := map[string]struct{}{}
+	for _, row := range rows {
+		id := stringField(row, column)
+		if !IsUUID(id) {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func mergeCollectionIDs(current, extra []string) ([]string, bool) {
+	seen := map[string]struct{}{}
+	merged := make([]string, 0, len(current)+len(extra))
+	for _, id := range current {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		merged = append(merged, id)
+	}
+	added := false
+	for _, id := range extra {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		merged = append(merged, id)
+		added = true
+	}
+	return merged, added
+}
+
+func interviewRoleTableMissing(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := err.Error()
+	return strings.Contains(text, "interview_collection_roles") &&
+		(strings.Contains(text, "42P01") || strings.Contains(text, "does not exist"))
 }
 
 func (s *Service) GetCollection(ctx context.Context, caller Caller, id string) (map[string]any, error) {

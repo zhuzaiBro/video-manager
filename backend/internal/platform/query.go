@@ -34,6 +34,7 @@ var allowedTables = map[string]struct{}{
 	"interview_tags":                   {},
 	"interview_collections":            {},
 	"interview_collection_tags":        {},
+	"interview_collection_roles":       {},
 	"interview_question":               {},
 	"interview_question_favorites":     {},
 	"interview_question_submissions":   {},
