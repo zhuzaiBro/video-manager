@@ -79,6 +79,7 @@ func (h *Handler) Register(r gin.IRoutes) {
 	r.POST("/api/platform/admin/users/sync-profiles", h.required(h.syncProfiles))
 	r.PATCH("/api/platform/admin/users/:id/membership", h.required(h.grantMembership))
 	r.POST("/api/platform/telegram/webhook", h.telegramWebhook)
+	h.registerSupport(r)
 	r.POST("/api/platform/admin/courses", h.required(h.createCourse))
 	r.POST("/api/platform/admin/chapters", h.required(h.createChapter))
 	r.PATCH("/api/platform/admin/chapters/:id", h.required(h.updateChapter))
@@ -236,7 +237,12 @@ func (h *Handler) removeFavorite(c *gin.Context, caller Caller) {
 
 func (h *Handler) listMessages(c *gin.Context, caller Caller) {
 	result, err := h.service.ListMessages(c.Request.Context(), caller, c.Query("sessionId"))
-	writeResult(c, gin.H{"messages": result.Rows}, err)
+	data := gin.H{"messages": result.Rows}
+	if err == nil && h.service.support != nil && h.service.support.RTEnabled() {
+		data["topic"] = h.service.support.Topic(c.Query("sessionId"))
+	}
+	c.Header("Cache-Control", "private, no-store")
+	writeResult(c, data, err)
 }
 
 func (h *Handler) createMessage(c *gin.Context, caller Caller) {

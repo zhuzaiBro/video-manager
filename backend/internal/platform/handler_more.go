@@ -1,6 +1,8 @@
 package platform
 
 import (
+	"errors"
+	"github.com/zood/video-manager/internal/support"
 	"io"
 
 	"github.com/gin-gonic/gin"
@@ -50,6 +52,15 @@ func (h *Handler) telegramWebhook(c *gin.Context) {
 	body, err := io.ReadAll(io.LimitReader(c.Request.Body, 1<<20))
 	if err != nil {
 		writeErr(c, invalid("请求体无法读取"))
+		return
+	}
+	if h.service.support != nil && (h.service.webhookSecret == "" || h.service.support.HasBot(c.Request.Context())) {
+		err = h.service.support.Webhook(c.Request.Context(), c.GetHeader("X-Telegram-Bot-Api-Secret-Token"), body)
+		if errors.Is(err, support.ErrWebhook) {
+			writeErr(c, unauthorized("Unauthorized"))
+			return
+		}
+		supportResult(c, gin.H{"ok": true}, err)
 		return
 	}
 	status, payload, err := h.service.HandleTelegram(c.Request.Context(), c.GetHeader("X-Telegram-Bot-Api-Secret-Token"), body)

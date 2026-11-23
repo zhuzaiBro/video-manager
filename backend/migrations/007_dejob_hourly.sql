@@ -24,6 +24,7 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'zood_dejob_sync') THEN
     CREATE ROLE zood_dejob_sync LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
   END IF;
+  EXECUTE format('GRANT CONNECT ON DATABASE %I TO zood_dejob_sync', current_database());
 END $$;
 GRANT USAGE ON SCHEMA public TO zood_dejob_sync;
 GRANT SELECT (id, slug, name, is_active, sync_config), UPDATE (sync_config) ON public.job_sources TO zood_dejob_sync;

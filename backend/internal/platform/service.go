@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/zood/video-manager/internal/platform/content"
+	"github.com/zood/video-manager/internal/support"
 )
 
 const (
@@ -20,6 +21,7 @@ const (
 )
 
 type Service struct {
+	support        *support.Service
 	source         Source
 	storage        ObjectStorage
 	dataSource     string
@@ -40,7 +42,9 @@ func NewService(source Source, storage ObjectStorage, dataSource string) *Servic
 
 func (s *Service) DataSource() string { return s.dataSource }
 
-func (s *Service) SetPrivileged(p Privileged)        { s.privileged = p }
+func (s *Service) SetPrivileged(p Privileged)          { s.privileged = p }
+func (s *Service) SetSupport(support *support.Service) { s.support = support }
+
 func (s *Service) SetTelegram(sender TelegramSender) { s.telegram = sender }
 func (s *Service) SetTelegramSecrets(webhook, setup string) {
 	s.webhookSecret = webhook
@@ -673,8 +677,17 @@ func (s *Service) CreateMessage(ctx context.Context, caller Caller, sessionID, c
 	if !IsUUID(sessionID) {
 		return nil, invalid("会话标识不合法")
 	}
+	if !caller.SignedIn() && s.support != nil {
+		ok, err := s.support.GuestAllowed(ctx, sessionID)
+		if err != nil {
+			return nil, NewError(503, "SUPPORT_UNAVAILABLE", "客服暂时不可用")
+		}
+		if !ok {
+			return nil, forbidden("会话身份不匹配")
+		}
+	}
 	content = strings.TrimSpace(content)
-	if content == "" || len(content) > 2000 {
+	if content == "" || len([]rune(content)) > 2000 {
 		return nil, invalid("消息内容不合法")
 	}
 	if caller.SignedIn() && sessionID != caller.UserID {
@@ -722,6 +735,12 @@ func (s *Service) CreateMessage(ctx context.Context, caller Caller, sessionID, c
 		return nil, forbidden("无权发送消息")
 	}
 	result.Rows[0]["pageUrl"] = pageURL
+	if s.support != nil {
+		s.support.Notify(sessionID)
+		if s.telegram == nil || s.support.HasBot(ctx) {
+			return result.Rows[0], nil
+		}
+	}
 	forwarded := s.forwardUserMessage(ctx, stringField(result.Rows[0], "id"), sessionID, content, pageURL, caller)
 	result.Rows[0]["forwarded"] = forwarded
 	return result.Rows[0], nil
@@ -731,18 +750,31 @@ func (s *Service) ListMessages(ctx context.Context, caller Caller, sessionID str
 	if !IsUUID(sessionID) {
 		return Result{}, invalid("会话标识不合法")
 	}
+	if !caller.SignedIn() && s.support != nil {
+		ok, err := s.support.GuestAllowed(ctx, sessionID)
+		if err != nil {
+			return Result{}, NewError(503, "SUPPORT_UNAVAILABLE", "客服暂时不可用")
+		}
+		if !ok {
+			return Result{}, forbidden("会话身份不匹配")
+		}
+	}
 	if caller.SignedIn() && sessionID != caller.UserID {
 		if err := s.requireAdmin(ctx, caller); err != nil {
 			return Result{}, err
 		}
 	}
-	return s.many(ctx, caller, Query{
+	result, err := s.many(ctx, caller, Query{
 		Table:   "messages",
 		Select:  "id,session_id,user_id,sender_type,content,created_at",
 		Filters: []Filter{{Column: "session_id", Op: "eq", Value: sessionID}},
-		Orders:  []Order{{Column: "created_at"}},
+		Orders:  []Order{{Column: "created_at", Desc: true}, {Column: "id", Desc: true}},
 		Limit:   200,
 	})
+	for i, j := 0, len(result.Rows)-1; i < j; i, j = i+1, j-1 {
+		result.Rows[i], result.Rows[j] = result.Rows[j], result.Rows[i]
+	}
+	return result, err
 }
 
 func contactsOf(job map[string]any) map[string]any {

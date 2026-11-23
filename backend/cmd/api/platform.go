@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"github.com/joho/godotenv"
+	"github.com/zood/video-manager/internal/support"
 	"log"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -17,7 +20,7 @@ import (
 	"github.com/zood/video-manager/internal/repository"
 )
 
-func registerPlatform(r *gin.Engine, cfg *config.Config, validator *auth.Validator, videos *repository.VideoRepository, blob platform.BlobStore) {
+func registerPlatform(lifetime context.Context, r *gin.Engine, cfg *config.Config, validator *auth.Validator, videos *repository.VideoRepository, blob platform.BlobStore) {
 	if cfg.PlatformDataSource != "postgres" {
 		log.Println("warning: platform API disabled, Supabase is not used; set PLATFORM_DATA_SOURCE=postgres")
 		return
@@ -48,6 +51,16 @@ func registerPlatform(r *gin.Engine, cfg *config.Config, validator *auth.Validat
 		return
 	}
 	service.SetCatalog(catalog)
+	_ = godotenv.Load("/etc/zood/support.env")
+	if dsn := os.Getenv("SUPPORT_DATABASE_URL"); dsn != "" {
+		inbox, err := support.Open(dsn, os.Getenv("SUPPORT_ENCRYPTION_KEY"), cfg.APIBaseURL, cfg.SupabaseURL, os.Getenv("SUPABASE_PUBLISHABLE_KEY"))
+		if err != nil {
+			log.Printf("support service unavailable: %v", err)
+		} else {
+			service.SetSupport(inbox)
+			go inbox.Run(lifetime)
+		}
+	}
 	service.SetPrivileged(pg)
 	service.SetTelegramSecrets(cfg.TelegramWebhookSecret, cfg.TelegramSetupSecret)
 	if cfg.TelegramBotToken != "" {
