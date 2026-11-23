@@ -17,7 +17,7 @@ const (
 	UsageKeyTTL            = 48 * time.Hour
 	OnlineDeviceTTL        = 60 * time.Second
 
-	DefaultChunkSize  = 5 * 1024 * 1024 // 5MB
+	DefaultChunkSize  = 5 * 1024 * 1024         // 5MB
 	MaxUploadFileSize = 20 * 1024 * 1024 * 1024 // 20GB
 	ChunkUploadTTL    = 24 * time.Hour
 )
@@ -40,11 +40,11 @@ type Config struct {
 	MaxUploadFileSize int64
 	ChunkUploadTTL    time.Duration
 
-	COSSecretID  string
-	COSSecretKey string
-	COSBucket         string
-	COSRegion         string
-	COSCustomDomain   string // COS 控制台绑定的自定义域名，如 https://workspace.zood.work
+	COSSecretID     string
+	COSSecretKey    string
+	COSBucket       string
+	COSRegion       string
+	COSCustomDomain string // COS 控制台绑定的自定义域名，如 https://workspace.zood.work
 
 	// API 对外地址（play/m3u8 入口，可与 COS 域名不同）
 	APIBaseURL string
@@ -60,6 +60,19 @@ type Config struct {
 	JWTSecret         string
 	SupabaseJWTSecret string
 	TokenExpireSec    int
+
+	// 业务平台 API。默认仍读取 Supabase，自建库仅在显式切换后使用。
+	SupabaseURL            string
+	SupabaseJWKSURL        string
+	SupabaseAnonKey        string
+	SupabaseServiceRoleKey string
+	PlatformDataSource     string
+	PlatformDatabaseURL    string
+	TelegramBotToken       string
+	TelegramWebhookSecret  string
+	TelegramSetupSecret    string
+	SupportConfigKey       string
+	SupportChannelKey      string
 }
 
 func Load() *Config {
@@ -83,8 +96,8 @@ func Load() *Config {
 		MaxUploadFileSize: getEnvInt64("MAX_UPLOAD_FILE_SIZE", MaxUploadFileSize),
 		ChunkUploadTTL:    time.Duration(getEnvInt("CHUNK_UPLOAD_TTL_HOURS", 24)) * time.Hour,
 
-		COSSecretID:  getEnv("COS_SECRET_ID", ""),
-		COSSecretKey: getEnv("COS_SECRET_KEY", ""),
+		COSSecretID:     getEnv("COS_SECRET_ID", ""),
+		COSSecretKey:    getEnv("COS_SECRET_KEY", ""),
 		COSBucket:       getEnv("COS_BUCKET", ""),
 		COSRegion:       getEnv("COS_REGION", "ap-guangzhou"),
 		COSCustomDomain: getEnv("COS_CUSTOM_DOMAIN", ""),
@@ -100,6 +113,18 @@ func Load() *Config {
 		CORSOrigins:       getEnv("CORS_ORIGINS", "*"),
 		SupabaseJWTSecret: getEnv("SUPABASE_JWT_SECRET", ""),
 		TokenExpireSec:    getEnvInt("TOKEN_EXPIRE_SEC", 3600),
+
+		SupabaseURL:            strings.TrimRight(getEnv("SUPABASE_URL", ""), "/"),
+		SupabaseJWKSURL:        getEnv("SUPABASE_JWKS_URL", ""),
+		SupabaseAnonKey:        getEnv("SUPABASE_ANON_KEY", ""),
+		SupabaseServiceRoleKey: getEnv("SUPABASE_SERVICE_ROLE_KEY", ""),
+		PlatformDataSource:     strings.ToLower(getEnv("PLATFORM_DATA_SOURCE", "supabase")),
+		PlatformDatabaseURL:    getEnv("PLATFORM_DATABASE_URL", ""),
+		TelegramBotToken:       getEnv("TELEGRAM_BOT_TOKEN", ""),
+		TelegramWebhookSecret:  getEnv("TELEGRAM_WEBHOOK_SECRET", ""),
+		TelegramSetupSecret:    getEnv("TELEGRAM_SETUP_SECRET", ""),
+		SupportConfigKey:       getEnv("SUPPORT_CONFIG_KEY", ""),
+		SupportChannelKey:      getEnv("SUPPORT_CHANNEL_KEY", ""),
 	}
 
 	if cfg.SupabaseJWTSecret == "" {

@@ -2,7 +2,6 @@ package repository
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,19 +26,19 @@ func NewDB(databaseURL string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connect database: %w", err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("video database pool: %w", err)
+	}
+	sqlDB.SetMaxOpenConns(8)
+	sqlDB.SetMaxIdleConns(2)
 	return &DB{DB: db}, nil
 }
 
-// Supabase pooler (6543) 不支持 GORM 预编译语句，需禁用。
+// PreferSimpleProtocol is a driver option. PostgreSQL 17 rejects it when it
+// is sent as a server startup parameter, so it must not be appended to the DSN.
 func ensurePgBouncerCompat(dsn string) string {
-	if strings.Contains(dsn, "prefer_simple_protocol=") {
-		return dsn
-	}
-	sep := "?"
-	if strings.Contains(dsn, "?") {
-		sep = "&"
-	}
-	return dsn + sep + "prefer_simple_protocol=true"
+	return dsn
 }
 
 type VideoRepository struct {
