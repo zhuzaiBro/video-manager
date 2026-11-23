@@ -30,7 +30,7 @@ func New(db *gormplus.DB) (Catalog, error) {
 		return Catalog{}, err
 	}
 	jobs, err := gormplus.NewRepo[Job](db,
-		[]string{"title", "company_name", "description", "office_mode_name", "location", "source_created_at", "last_synced_at", "id"},
+		[]string{"title", "company_name", "description", "is_remote", "source_created_at", "last_synced_at", "id"},
 		nil)
 	if err != nil {
 		return Catalog{}, err
@@ -170,9 +170,9 @@ func (c Catalog) ListJobs(ctx context.Context, userID, keyword string, remoteOnl
 				q.ILike([]string{"title", "company_name", "description"}, keyword)
 			}
 			if remoteOnly {
-				q.ILike([]string{"office_mode_name", "location"}, "remote")
+				q.Eq("is_remote", true)
 			}
-			q.Order("source_created_at", true).Order("last_synced_at", true)
+			q.Order("source_created_at", true).Order("last_synced_at", true).Order("id", false)
 		})
 		if err != nil {
 			return err
@@ -291,6 +291,7 @@ func jobsToMaps(rows []Job) []map[string]any {
 			"company_logo": row.CompanyLogo, "location": row.Location,
 			"office_mode_name": row.OfficeModeName, "work_type_name": row.WorkTypeName,
 			"min_salary": row.MinSalary, "max_salary": row.MaxSalary,
+			"salary_currency": row.SalaryCurrency, "pay_period": row.PayPeriod,
 			"source_created_at": row.SourceCreatedAt, "last_synced_at": row.LastSyncedAt,
 			"description": row.Description, "tags": tags, "status": row.Status,
 		}

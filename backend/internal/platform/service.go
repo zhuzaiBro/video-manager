@@ -14,8 +14,8 @@ const (
 	monthlyFreeUnlockLimit  = 3
 	membershipPlanPrice     = 129
 	chatRateLimit           = 5
-	publicJobColumns        = "id,title,company_name,company_logo,company_website,location,office_mode_name,work_type_name,min_salary,max_salary,source_created_at,last_synced_at,description,requirements,benefits,extra_content,tags,status"
-	publicJobListColumns    = "id,title,company_name,company_logo,location,office_mode_name,work_type_name,min_salary,max_salary,source_created_at,last_synced_at,description,tags"
+	publicJobColumns        = "id,title,company_name,company_logo,company_website,location,office_mode_name,work_type_name,min_salary,max_salary,salary_currency,pay_period,source_created_at,last_synced_at,description,requirements,benefits,extra_content,tags,status,has_contact"
+	publicJobListColumns    = "id,title,company_name,company_logo,location,office_mode_name,work_type_name,min_salary,max_salary,salary_currency,pay_period,source_created_at,last_synced_at,description,tags"
 	jobContactColumnsSelect = "id,title,company_name,email,phone,wechat,telegram"
 )
 
@@ -413,13 +413,13 @@ func (s *Service) ListJobs(ctx context.Context, caller Caller, keyword string, r
 		filters = append(filters, Filter{Op: "or_ilike", Columns: []string{"title", "company_name", "description"}, Value: keyword})
 	}
 	if remoteOnly {
-		filters = append(filters, Filter{Op: "or_ilike", Columns: []string{"office_mode_name", "location"}, Value: "remote"})
+		filters = append(filters, Filter{Column: "is_remote", Op: "eq", Value: "true"})
 	}
 	result, err := s.many(ctx, caller, Query{
 		Table:   "job_listings",
 		Select:  publicJobListColumns,
 		Filters: filters,
-		Orders:  []Order{{Column: "source_created_at", Desc: true}, {Column: "last_synced_at", Desc: true}},
+		Orders:  []Order{{Column: "source_created_at", Desc: true}, {Column: "last_synced_at", Desc: true}, {Column: "id"}},
 		Limit:   jobPageSize,
 		Offset:  (page - 1) * jobPageSize,
 		Count:   true,
@@ -486,6 +486,15 @@ func (s *Service) JobContact(ctx context.Context, caller Caller, id string, stat
 	if job == nil {
 		return nil, notFound("岗位不存在")
 	}
+	for _, column := range []string{"email", "phone", "wechat", "telegram"} {
+		if strings.TrimSpace(stringField(job, column)) != "" {
+			return s.unlockJobContact(ctx, caller, id, job, member, statusOnly)
+		}
+	}
+	return map[string]any{"unlocked": false, "available": false, "message": "招聘方暂未公开联系方式"}, nil
+}
+
+func (s *Service) unlockJobContact(ctx context.Context, caller Caller, id string, job map[string]any, member, statusOnly bool) (map[string]any, error) {
 	monthStart := shanghaiMonthStart(time.Now())
 	existing, err := s.one(ctx, caller, Query{
 		Table:  "job_contact_unlocks",

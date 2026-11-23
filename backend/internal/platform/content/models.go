@@ -55,6 +55,8 @@ type Job struct {
 	WorkTypeName    *string    `gorm:"column:work_type_name"`
 	MinSalary       *float64   `gorm:"column:min_salary"`
 	MaxSalary       *float64   `gorm:"column:max_salary"`
+	SalaryCurrency  *string    `gorm:"column:salary_currency"`
+	PayPeriod       *string    `gorm:"column:pay_period"`
 	SourceCreatedAt *time.Time `gorm:"column:source_created_at;autoCreateTime:false"`
 	LastSyncedAt    *time.Time `gorm:"column:last_synced_at;autoUpdateTime:false"`
 	Description     *string    `gorm:"column:description"`

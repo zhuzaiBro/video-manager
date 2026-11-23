@@ -217,3 +217,17 @@ func TestNonAdminCannotUpdateCourse(t *testing.T) {
 		t.Fatal("non-admin write was issued")
 	}
 }
+
+func TestJobWithoutContactsConsumesNoUnlock(t *testing.T) {
+	id := "8b1b5d4e-6a7c-4d11-9a1e-0d4c2b6f8a10"
+	source := &fakeSource{tables: map[string][]map[string]any{
+		"job_listings": {{"id": id, "email": " "}},
+	}}
+	s := NewService(source, nil, "postgres")
+	for _, statusOnly := range []bool{true, false} {
+		result, err := s.JobContact(context.Background(), Caller{UserID: id, Token: "test-session"}, id, statusOnly)
+		if err != nil || result["available"] != false || len(source.writes) != 0 {
+			t.Fatalf("empty contacts: result=%v err=%v writes=%v", result, err, source.writes)
+		}
+	}
+}

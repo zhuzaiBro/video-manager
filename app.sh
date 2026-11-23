@@ -135,6 +135,7 @@ build() {
   "$GO_BIN" mod tidy
   "$GO_BIN" build -o "$API_BIN" ./cmd/api
   "$GO_BIN" build -o "$WORKER_BIN" ./cmd/video-worker
+  "$GO_BIN" build -o "$BIN_DIR/sync-dejob" ./cmd/sync-dejob
   echo "[build] done: $API_BIN, $WORKER_BIN"
 }
 

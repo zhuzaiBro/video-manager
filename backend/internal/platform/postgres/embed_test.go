@@ -33,7 +33,8 @@ func TestPublicPostsCategoriesAndJobs(t *testing.T) {
 		`CREATE TABLE public.post_cate_relations (post_id uuid, cate_id uuid)`,
 		`CREATE TABLE public.job_listings (
 			id uuid PRIMARY KEY, title text, company_name text, company_logo text, location text,
-			office_mode_name text, work_type_name text, min_salary numeric, max_salary numeric,
+			office_mode_name text, work_type_name text, min_salary numeric, max_salary numeric, salary_currency text, pay_period text,
+			is_remote boolean GENERATED ALWAYS AS (coalesce(office_mode_name,'') || ' ' || coalesce(location,'') ~* '(remote|远程|线上)') STORED,
 			source_created_at timestamptz, last_synced_at timestamptz DEFAULT now(),
 			description text, tags jsonb, status integer NOT NULL DEFAULT 0, email text
 		)`,

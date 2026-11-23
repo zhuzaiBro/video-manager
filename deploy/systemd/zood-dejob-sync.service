@@ -1,0 +1,14 @@
+[Unit]
+Description=Video API - sync the latest DeJob listings
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/zood/dejob-sync.env
+ExecStart=/www/wwwroot/video-manager/backend/bin/sync-dejob
+DynamicUser=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+TimeoutStartSec=12min

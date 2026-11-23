@@ -24,3 +24,9 @@
 | `DATABASE_URL` | 现有视频库，不要改指到空的 zood 库 |
 
 `003_platform_independent.sql` 不要应用到已有 `auth.uid()` 策略的恢复库。Storage、Realtime 和视频库不迁到新 Supabase。
+
+## DeJob 岗位同步
+
+在业务库应用 `migrations/007_dejob_hourly.sql`，为专用角色 `zood_dejob_sync` 设置登录密码。将该角色的业务库连接串 `DEJOB_DATABASE_URL` 和 DeJob 令牌 `DEJOB_USER_TOKEN` 放入仅 root 可读的 `/etc/zood/dejob-sync.env`。在 backend 目录执行 `go build -o bin/sync-dejob ./cmd/sync-dejob`，将 deploy/systemd 下的两个文件安装到 /etc/systemd/system，执行 `systemctl daemon-reload` 和 `systemctl enable --now zood-dejob-sync.timer`。首次上线可执行 `systemctl start zood-dejob-sync.service`。
+
+任务每个整点运行，首次取最新 20 条，再按上次成功的发布时间向后翻页。检查 `systemctl list-timers zood-dejob-sync.timer` 和 `journalctl -u zood-dejob-sync.service` 可见下次执行时间和新增、更新、未变化数量。既有岗位保留站内 ID 和联系方式。
