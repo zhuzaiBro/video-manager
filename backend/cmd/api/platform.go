@@ -53,7 +53,7 @@ func registerPlatform(lifetime context.Context, r *gin.Engine, cfg *config.Confi
 	service.SetCatalog(catalog)
 	_ = godotenv.Load("/etc/zood/support.env")
 	if dsn := os.Getenv("SUPPORT_DATABASE_URL"); dsn != "" {
-		inbox, err := support.Open(dsn, os.Getenv("SUPPORT_ENCRYPTION_KEY"), cfg.APIBaseURL, cfg.SupabaseURL, os.Getenv("SUPABASE_PUBLISHABLE_KEY"))
+		inbox, err := support.Open(dsn, os.Getenv("SUPPORT_ENCRYPTION_KEY"), cfg.APIBaseURL, cfg.SupabaseURL, os.Getenv("SUPABASE_PUBLISHABLE_KEY"), os.Getenv("SUPPORT_TELEGRAM_SIGNING_SEED"))
 		if err != nil {
 			log.Printf("support service unavailable: %v", err)
 		} else {

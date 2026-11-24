@@ -2,15 +2,20 @@ package support
 
 import (
 	"context"
+	"crypto/ed25519"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -22,7 +27,7 @@ func TestTelegramInboxRoundTrip(t *testing.T) {
 		t.Skip("no disposable support database")
 	}
 	ctx := context.Background()
-	s, err := Open(dsn, strings.Repeat("01", 32), "https://fixture.example.test", "", "")
+	s, err := Open(dsn, strings.Repeat("01", 32), "https://fixture.example.test", "", "", strings.Repeat("02", 32))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,27 +41,52 @@ func TestTelegramInboxRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	var webhookSecret string
+	token := "54321:" + strings.Repeat("example", 5)
+	rejectedToken := "43210:" + strings.Repeat("fixture", 5)
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var input map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&input)
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/getMe"):
-			io.WriteString(w, `{"ok":true,"result":{"id":54321,"username":"example_test_bot","is_bot":true}}`)
-		case strings.HasSuffix(r.URL.Path, "/setWebhook"):
-			webhookSecret, _ = input["secret_token"].(string)
-			if input["url"] != "https://fixture.example.test/api/platform/telegram/webhook" {
+		body, _ := io.ReadAll(r.Body)
+		stamp := r.Header.Get("X-Zood-Time")
+		seconds, _ := strconv.ParseInt(stamp, 10, 64)
+		signature, _ := base64.StdEncoding.DecodeString(r.Header.Get("X-Zood-Signature"))
+		if r.URL.RequestURI() != "/support" || time.Now().Unix()-seconds > 60 ||
+			!ed25519.Verify(s.telegramSigner.Public().(ed25519.PublicKey), append([]byte(stamp+"\n"), body...), signature) {
+			t.Error("invalid relay request or signature")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var call struct {
+			Method, Token string
+			Payload       map[string]any
+		}
+		if json.Unmarshal(body, &call) != nil || (call.Token != token && call.Token != rejectedToken) {
+			t.Error("invalid signed envelope")
+			return
+		}
+		switch call.Method {
+		case "getMe":
+			if call.Token == rejectedToken {
+				io.WriteString(w, `{"ok":true,"result":{"id":43210,"username":"other_bot","is_bot":true}}`)
+				return
+			}
+			io.WriteString(w, `{"ok":true,"result":{"id":54321,"active_usernames":["example_test_bot"],"is_bot":true}}`)
+		case "setWebhook":
+			if call.Token == rejectedToken {
+				io.WriteString(w, `{"ok":true,"result":false}`)
+				return
+			}
+			webhookSecret, _ = call.Payload["secret_token"].(string)
+			if call.Payload["url"] != "https://fixture.example.test/api/platform/telegram/webhook" {
 				t.Error("wrong webhook URL")
 			}
 			io.WriteString(w, `{"ok":true,"result":true}`)
-		case strings.HasSuffix(r.URL.Path, "/sendMessage"):
+		case "sendMessage":
 			io.WriteString(w, `{"ok":true,"result":{"message_id":42}}`)
 		default:
 			t.Error("unknown Telegram method")
 		}
 	}))
 	defer api.Close()
-	s.telegramBase = api.URL
-	token := "54321:" + strings.Repeat("example", 5)
+	s.telegramBase = api.URL + "/support"
 	if err = s.Configure(ctx, token); err != nil {
 		t.Fatal(err)
 	}
@@ -71,6 +101,13 @@ func TestTelegramInboxRoundTrip(t *testing.T) {
 	bind, err := s.Binding(ctx)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if err := s.Configure(ctx, rejectedToken); !errors.Is(err, ErrTelegramWebhook) {
+		t.Fatalf("unconfirmed webhook: %v", err)
+	}
+	bot, err := s.bot(ctx)
+	if err != nil || bot.Token != token {
+		t.Fatal("failed replacement changed the saved bot")
 	}
 	link, _ := url.Parse(bind)
 	message := func(id int, content string, reply bool) []byte {
@@ -114,5 +151,35 @@ func TestTelegramInboxRoundTrip(t *testing.T) {
 	threads, _, err := s.Threads(ctx, 1)
 	if err != nil || len(threads) == 0 || threads[0].ID != session {
 		t.Fatal("inbox missing conversation", err)
+	}
+}
+
+func TestTelegramFailureClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name, method, response string
+		status                 int
+		want                   error
+	}{
+		{"rejected token", "getMe", `{"ok":false,"error_code":401}`, 401, ErrTelegramToken},
+		{"unknown token", "getMe", `{"ok":false,"error_code":404}`, 404, ErrTelegramToken},
+		{"invalid callback", "setWebhook", `{"ok":false,"error_code":400}`, 400, ErrTelegramWebhook},
+		{"rate limit", "getMe", `{"ok":false,"error_code":429}`, 429, ErrTelegramBusy},
+		{"relay unauthorized", "getMe", "", 401, ErrTelegram},
+		{"relay offline", "getMe", "Bad Gateway", 502, ErrTelegram},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/botfixture/"+tc.method || r.Header.Get("X-Zood-Signature") != "" {
+					t.Error("unexpected direct Telegram request")
+				}
+				w.WriteHeader(tc.status)
+				io.WriteString(w, tc.response)
+			}))
+			defer api.Close()
+			s := Service{client: api.Client(), telegramBase: api.URL}
+			if got := s.tg(context.Background(), "fixture", tc.method, nil, nil); !errors.Is(got, tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

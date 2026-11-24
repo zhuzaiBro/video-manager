@@ -31,8 +31,16 @@ func supportResult(c *gin.Context, data any, err error) {
 		return
 	}
 	switch {
+	case errors.Is(err, support.ErrTelegramToken):
+		writeErr(c, NewError(400, "TELEGRAM_INVALID_TOKEN", "Telegram 拒绝了这个 Token，请从 BotFather 复制当前机器人的完整 Token。"))
+	case errors.Is(err, support.ErrTelegramBot):
+		writeErr(c, NewError(422, "TELEGRAM_BOT_IDENTITY", "Telegram 没有返回可绑定的机器人用户名，请在 BotFather 确认机器人信息。"))
+	case errors.Is(err, support.ErrTelegramWebhook):
+		writeErr(c, NewError(502, "TELEGRAM_WEBHOOK_REJECTED", "机器人身份已确认，但 Telegram 拒绝注册网站回调。请联系网站管理员检查回调地址。"))
+	case errors.Is(err, support.ErrTelegramBusy):
+		writeErr(c, NewError(429, "TELEGRAM_RATE_LIMITED", "Telegram 请求过于频繁，请稍后再试。"))
 	case errors.Is(err, support.ErrTelegram):
-		writeErr(c, NewError(502, "TELEGRAM_UNAVAILABLE", "Telegram 未确认机器人或回调地址，请检查 Token 后重试"))
+		writeErr(c, NewError(502, "TELEGRAM_UNAVAILABLE", "客服服务器暂时无法与 Telegram 通信，请稍后重试。"))
 	case errors.Is(err, sql.ErrNoRows):
 		writeErr(c, notFound("未找到对应的会话或机器人"))
 	default:

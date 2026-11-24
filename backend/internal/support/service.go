@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -19,6 +20,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,9 +34,10 @@ type Service struct {
 	client                       *http.Client
 	apiBase, realtime, publicKey string
 	telegramBase                 string
+	telegramSigner               ed25519.PrivateKey
 }
 
-func Open(dsn, keyHex, apiBase, supabaseURL, publishable string) (*Service, error) {
+func Open(dsn, keyHex, apiBase, supabaseURL, publishable, signingSeed string) (*Service, error) {
 	key, err := hex.DecodeString(keyHex)
 	if err != nil || len(key) != 32 {
 		return nil, errors.New("invalid support encryption key")
@@ -42,6 +45,16 @@ func Open(dsn, keyHex, apiBase, supabaseURL, publishable string) (*Service, erro
 	u, err := url.Parse(apiBase)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
 		return nil, errors.New("invalid Video API webhook base")
+	}
+	telegramBase := "https://api.telegram.org"
+	var signer ed25519.PrivateKey
+	if signingSeed != "" {
+		seed, err := hex.DecodeString(signingSeed)
+		if err != nil || len(seed) != ed25519.SeedSize {
+			return nil, errors.New("invalid support Telegram signing key")
+		}
+		signer = ed25519.NewKeyFromSeed(seed)
+		telegramBase = "https://www.zood.work/api/telegram/support"
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -58,7 +71,7 @@ func Open(dsn, keyHex, apiBase, supabaseURL, publishable string) (*Service, erro
 	db.SetMaxOpenConns(4)
 	db.SetMaxIdleConns(2)
 	s := &Service{db: db, key: key, box: box, client: &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }},
-		apiBase: strings.TrimRight(apiBase, "/"), telegramBase: "https://api.telegram.org", realtime: strings.TrimRight(supabaseURL, "/"), publicKey: publishable}
+		apiBase: strings.TrimRight(apiBase, "/"), telegramBase: telegramBase, telegramSigner: signer, realtime: strings.TrimRight(supabaseURL, "/"), publicKey: publishable}
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
 	var table string
@@ -238,28 +251,70 @@ func (s *Service) Config(ctx context.Context) (map[string]any, error) {
 }
 
 var BotTokenPattern = regexp.MustCompile(`^[0-9]{4,20}:[A-Za-z0-9_-]{24,128}$`)
-var ErrTelegram = errors.New("telegram configuration unavailable")
+var (
+	ErrTelegram        = errors.New("Telegram service unavailable")
+	ErrTelegramToken   = errors.New("Telegram rejected the bot token")
+	ErrTelegramWebhook = errors.New("Telegram rejected the webhook")
+	ErrTelegramBusy    = errors.New("Telegram rate limit reached")
+	ErrTelegramBot     = errors.New("Telegram bot identity is incomplete")
+)
 
-func (s *Service) tg(ctx context.Context, token, method string, input any, result any) error {
+func (s *Service) tg(ctx context.Context, token, method string, input any, result any) (failure error) {
+	status := 0
+	defer func() {
+		if failure != nil {
+			// A transport error's URL can contain the token. Log only classified errors.
+			log.Printf("Support Telegram %s status=%d: %v", method, status, failure)
+		}
+	}()
+	endpoint := s.telegramBase
+	if s.telegramSigner != nil {
+		input = map[string]any{"method": method, "token": token, "payload": input}
+	} else {
+		endpoint += "/bot" + token + "/" + method
+	}
 	body, err := json.Marshal(input)
 	if err != nil {
 		return ErrTelegram
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.telegramBase+"/bot"+token+"/"+method, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return ErrTelegram
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if s.telegramSigner != nil {
+		stamp := strconv.FormatInt(time.Now().Unix(), 10)
+		signature := ed25519.Sign(s.telegramSigner, append([]byte(stamp+"\n"), body...))
+		req.Header.Set("X-Zood-Time", stamp)
+		req.Header.Set("X-Zood-Signature", base64.StdEncoding.EncodeToString(signature))
+	}
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return ErrTelegram
 	}
 	defer resp.Body.Close()
+	status = resp.StatusCode
 	var data struct {
-		OK     bool            `json:"ok"`
-		Result json.RawMessage `json:"result"`
+		OK        bool            `json:"ok"`
+		Result    json.RawMessage `json:"result"`
+		ErrorCode int             `json:"error_code"`
 	}
-	if resp.StatusCode/100 != 2 || json.NewDecoder(io.LimitReader(resp.Body, 128<<10)).Decode(&data) != nil || !data.OK {
+	if json.NewDecoder(io.LimitReader(resp.Body, 128<<10)).Decode(&data) != nil {
+		return ErrTelegram
+	}
+	if !data.OK {
+		switch {
+		case data.ErrorCode == 429:
+			return ErrTelegramBusy
+		case data.ErrorCode == 401 || (method == "getMe" && data.ErrorCode == 404):
+			return ErrTelegramToken
+		case method == "setWebhook" && (data.ErrorCode == 400 || data.ErrorCode == 403):
+			return ErrTelegramWebhook
+		default:
+			return ErrTelegram
+		}
+	}
+	if status/100 != 2 {
 		return ErrTelegram
 	}
 	if result != nil && json.Unmarshal(data.Result, result) != nil {
@@ -269,13 +324,23 @@ func (s *Service) tg(ctx context.Context, token, method string, input any, resul
 }
 
 func (s *Service) Configure(ctx context.Context, token string) error {
-	var identity struct {
-		ID       int64  `json:"id"`
-		Username string `json:"username"`
-		IsBot    bool   `json:"is_bot"`
+	if !BotTokenPattern.MatchString(token) {
+		return ErrTelegramToken
 	}
-	if !BotTokenPattern.MatchString(token) || s.tg(ctx, token, "getMe", map[string]any{}, &identity) != nil || !identity.IsBot || identity.ID == 0 || identity.Username == "" {
-		return ErrTelegram
+	var identity struct {
+		ID              int64    `json:"id"`
+		Username        string   `json:"username"`
+		ActiveUsernames []string `json:"active_usernames"`
+		IsBot           bool     `json:"is_bot"`
+	}
+	if err := s.tg(ctx, token, "getMe", map[string]any{}, &identity); err != nil {
+		return err
+	}
+	if identity.Username == "" && len(identity.ActiveUsernames) != 0 {
+		identity.Username = identity.ActiveUsernames[0]
+	}
+	if !identity.IsBot || identity.ID <= 0 || identity.Username == "" {
+		return ErrTelegramBot
 	}
 	nonce := make([]byte, s.box.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
@@ -295,9 +360,13 @@ func (s *Service) Configure(ctx context.Context, token string) error {
 	  bind_hash=NULL,bind_expires=NULL`, identity.ID, identity.Username, sealed); err != nil {
 		return err
 	}
-	err = s.tg(ctx, token, "setWebhook", map[string]any{"url": s.apiBase + "/api/platform/telegram/webhook", "secret_token": s.mac(fmt.Sprintf("telegram/%d", identity.ID)), "allowed_updates": []string{"message"}, "drop_pending_updates": false}, nil)
+	var registered bool
+	err = s.tg(ctx, token, "setWebhook", map[string]any{"url": s.apiBase + "/api/platform/telegram/webhook", "secret_token": s.mac(fmt.Sprintf("telegram/%d", identity.ID)), "allowed_updates": []string{"message"}, "drop_pending_updates": false}, &registered)
 	if err != nil {
 		return err
+	}
+	if !registered {
+		return ErrTelegramWebhook
 	}
 	return tx.Commit()
 }
