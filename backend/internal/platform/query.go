@@ -391,19 +391,20 @@ func embedParts(token string) (alias, table, hint, inner string, ok bool) {
 func embedSpec(parent, alias, table, hint string) (resolvedEmbed, bool) {
 	type key struct{ parent, alias, table, hint string }
 	specs := map[key]resolvedEmbed{
-		{"posts", "author", "user_profiles", "fk_user_profiles_posts"}:                   one("author", "user_profiles", "author_id", "id", "username", "display_name", "avatar_url", "bio"),
-		{"post_cates", "post_cate_relations", "post_cate_relations", ""}:                 many("post_cate_relations", "post_cate_relations", "id", "cate_id", "post_id", "cate_id"),
-		{"post_cate_relations", "posts", "posts", ""}:                                    one("posts", "posts", "post_id", "id", "id", "title", "slug", "excerpt", "banner", "published", "is_public", "created_at", "author_id"),
-		{"post_cate_relations", "post_cates", "post_cates", ""}:                          one("post_cates", "post_cates", "cate_id", "id", "id", "name", "slug", "description"),
-		{"post_comments", "user_profiles", "user_profiles", "fk_post_comments_user"}:     one("user_profiles", "user_profiles", "user_id", "id", "id", "username", "display_name", "avatar_url"),
-		{"interview_question", "interview_question_tags", "interview_question_tags", ""}: many("interview_question_tags", "interview_question_tags", "id", "question_id", "question_id", "tag_id"),
-		{"interview_question_tags", "interview_tags", "interview_tags", ""}:              one("interview_tags", "interview_tags", "tag_id", "id", "id", "name"),
-		{"interview_question", "interview_collections", "interview_collections", ""}:     one("interview_collections", "interview_collections", "collection_id", "id", "id", "title"),
-		{"course_enrollments", "courses", "courses", ""}:                                 one("courses", "courses", "course_id", "id", "id", "title", "description", "cover_image_url", "price", "is_free"),
-		{"lesson_progress", "lessons", "lessons", ""}:                                    one("lessons", "lessons", "lesson_id", "id", "id", "title"),
-		{"lesson_progress", "courses", "courses", ""}:                                    one("courses", "courses", "course_id", "id", "id", "title"),
-		{"interview_question_favorites", "interview_question", "interview_question", ""}: one("interview_question", "interview_question", "question_id", "id", "id", "title", "content", "difficulty", "collection_id"),
-		{"interview_question_submissions", "user_profiles", "user_profiles", ""}:         one("user_profiles", "user_profiles", "user_id", "id", "id", "username", "display_name", "avatar_url"),
+		{"posts", "author", "user_profiles", "fk_user_profiles_posts"}:                           one("author", "user_profiles", "author_id", "id", "username", "display_name", "avatar_url", "bio"),
+		{"post_cates", "post_cate_relations", "post_cate_relations", ""}:                         many("post_cate_relations", "post_cate_relations", "id", "cate_id", "post_id", "cate_id"),
+		{"post_cate_relations", "posts", "posts", ""}:                                            one("posts", "posts", "post_id", "id", "id", "title", "slug", "excerpt", "banner", "published", "is_public", "created_at", "author_id"),
+		{"post_cate_relations", "post_cates", "post_cates", ""}:                                  one("post_cates", "post_cates", "cate_id", "id", "id", "name", "slug", "description"),
+		{"post_comments", "user_profiles", "user_profiles", "fk_post_comments_user"}:             one("user_profiles", "user_profiles", "user_id", "id", "id", "username", "display_name", "avatar_url"),
+		{"interview_question", "interview_question_tags", "interview_question_tags", ""}:         many("interview_question_tags", "interview_question_tags", "id", "question_id", "question_id", "tag_id"),
+		{"interview_question_tags", "interview_tags", "interview_tags", ""}:                      one("interview_tags", "interview_tags", "tag_id", "id", "id", "name"),
+		{"interview_question", "interview_collections", "interview_collections", ""}:             one("interview_collections", "interview_collections", "collection_id", "id", "id", "title"),
+		{"course_enrollments", "courses", "courses", ""}:                                         one("courses", "courses", "course_id", "id", "id", "title", "description", "cover_image_url", "price", "is_free"),
+		{"lesson_progress", "lessons", "lessons", ""}:                                            one("lessons", "lessons", "lesson_id", "id", "id", "title"),
+		{"lesson_progress", "courses", "courses", ""}:                                            one("courses", "courses", "course_id", "id", "id", "title"),
+		{"interview_question_favorites", "interview_question", "interview_question", ""}:         one("interview_question", "interview_question", "question_id", "id", "id", "title", "content", "difficulty", "collection_id"),
+		{"interview_question_submissions", "user_profiles", "user_profiles", ""}:                 one("user_profiles", "user_profiles", "user_id", "id", "id", "username", "display_name", "avatar_url"),
+		{"interview_question_submissions", "interview_collections", "interview_collections", ""}: one("interview_collections", "interview_collections", "collection_id", "id", "id", "title"),
 	}
 	spec, ok := specs[key{parent, alias, table, hint}]
 	return spec, ok
@@ -464,12 +465,16 @@ func SQL(q Query, countOnly bool) (SQLQuery, error) {
 		return SQLQuery{}, invalid("自建数据库暂不支持嵌套资源查询")
 	}
 	columns := splitColumns(q.Select)
-	for _, column := range columns {
+	for i, column := range columns {
 		if column == "*" {
 			return SQLQuery{}, invalid("自建数据库查询必须显式列出字段")
 		}
 		if !identPattern.MatchString(column) {
 			return SQLQuery{}, invalid("查询字段不合法")
+		}
+		// pgx's database/sql driver otherwise returns text[] as a PostgreSQL array literal.
+		if q.Table == "interview_question_submissions" && column == "tags" {
+			columns[i] = "to_jsonb(tags) AS tags"
 		}
 		if q.Table == "job_listings" {
 			if _, secret := jobContactColumns[column]; secret && !queryExplicitlyAllowsContact(q) {

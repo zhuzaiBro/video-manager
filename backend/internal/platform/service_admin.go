@@ -314,7 +314,7 @@ func (s *Service) ListSubmissions(ctx context.Context, caller Caller) (Result, e
 	}
 	return s.many(ctx, caller, Query{
 		Table:  "interview_question_submissions",
-		Select: "id,user_id,title,content,tags,status,admin_note,contact,difficulty,attachment_name,attachment_path,attachment_mime_type,created_at,updated_at,user_profiles(id,username,display_name,avatar_url)",
+		Select: "id,user_id,collection_id,title,content,tags,status,admin_note,source,contact,difficulty,attachment_name,attachment_path,attachment_mime_type,attachment_size_bytes,created_at,updated_at,user_profiles(id,username,display_name,avatar_url),interview_collections(id,title)",
 		Orders: []Order{{Column: "created_at", Desc: true}}, Limit: 200,
 	})
 }
