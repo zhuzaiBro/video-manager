@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/zood/video-manager/internal/support"
 )
 
 func (s *Service) questionNavigation(ctx context.Context, caller Caller, question map[string]any) (map[string]any, error) {
@@ -375,14 +377,16 @@ func (s *Service) forwardUserMessage(ctx context.Context, siteMessageID, session
 		return 0
 	}
 	chats, err := s.privileged.ListActiveTelegramAdmins(ctx)
-	if err != nil {
+	if err != nil || len(chats) == 0 {
 		return 0
 	}
-	visitor := "匿名访客"
-	if caller.Email != "" {
-		visitor = caller.Email
+	var profile map[string]any
+	if caller.SignedIn() {
+		profile, _ = s.one(ctx, caller, Query{Table: "user_profiles", Select: "display_name,username",
+			Filters: []Filter{{Column: "id", Op: "eq", Value: caller.UserID}}, Limit: 1})
 	}
-	text := "网站客服新消息\n访客：" + visitor + "\n会话：" + sessionID
+	sender := support.CustomerName(sessionID, caller.SignedIn(), stringField(profile, "display_name"), stringField(profile, "username"))
+	text := "网站客服新消息\n" + sender + "\n会话：" + sessionID
 	if pageURL != "" {
 		text += "\n页面：" + pageURL
 	}

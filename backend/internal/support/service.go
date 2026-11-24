@@ -131,18 +131,43 @@ func (s *Service) GuestAllowed(ctx context.Context, id string) (bool, error) {
 }
 
 type Thread struct {
-	ID      string    `json:"id"`
-	Content string    `json:"content"`
-	Sender  string    `json:"sender"`
-	At      time.Time `json:"at"`
-	Member  bool      `json:"member"`
+	ID           string    `json:"id"`
+	Content      string    `json:"content"`
+	Sender       string    `json:"sender"`
+	At           time.Time `json:"at"`
+	Member       bool      `json:"member"`
+	CustomerName string    `json:"customer_name"`
+}
+
+// CustomerName uses the account recorded on the customer's message. Session IDs
+// also exist for anonymous conversations and are not proof of account ownership.
+func CustomerName(session string, member bool, displayName, username string) string {
+	label := "网站访客"
+	if member {
+		label = "已登录用户"
+		for _, value := range []string{displayName, username} {
+			name := []rune(strings.Join(strings.Fields(value), " "))
+			if len(name) > 0 {
+				return string(name[:min(len(name), 80)])
+			}
+		}
+	}
+	return label + " · " + session[:min(len(session), 8)]
 }
 
 func (s *Service) Threads(ctx context.Context, page int) ([]Thread, bool, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT session_id,content,sender_type,created_at,
-	  EXISTS(SELECT 1 FROM public.user_profiles u WHERE u.id=t.session_id)
-	  FROM (SELECT DISTINCT ON(session_id) session_id,id,content,sender_type,created_at FROM public.messages
-	  ORDER BY session_id,created_at DESC,id DESC) t ORDER BY created_at DESC,id DESC LIMIT 31 OFFSET $1`, (page-1)*30)
+	rows, err := s.db.QueryContext(ctx, `WITH latest AS (
+	  SELECT DISTINCT ON(session_id) session_id,id,content,sender_type,created_at FROM public.messages
+	  ORDER BY session_id,created_at DESC,id DESC
+	), page AS (SELECT * FROM latest ORDER BY created_at DESC,id DESC LIMIT 31 OFFSET $1)
+	SELECT t.session_id,t.content,t.sender_type,t.created_at,customer.user_id IS NOT NULL,
+	       COALESCE(p.display_name,''),COALESCE(p.username,'')
+	FROM page t LEFT JOIN LATERAL (
+	  SELECT m.user_id FROM public.messages m WHERE m.session_id=t.session_id AND m.sender_type='user' AND m.user_id IS NOT NULL
+	  ORDER BY m.created_at DESC,m.id DESC LIMIT 1
+	) customer ON true
+	LEFT JOIN public.user_profiles p ON p.id=customer.user_id
+	ORDER BY t.created_at DESC,t.id DESC`, (page-1)*30)
 	if err != nil {
 		return nil, false, err
 	}
@@ -150,9 +175,11 @@ func (s *Service) Threads(ctx context.Context, page int) ([]Thread, bool, error)
 	out := []Thread{}
 	for rows.Next() {
 		var r Thread
-		if err = rows.Scan(&r.ID, &r.Content, &r.Sender, &r.At, &r.Member); err != nil {
+		var displayName, username string
+		if err = rows.Scan(&r.ID, &r.Content, &r.Sender, &r.At, &r.Member, &displayName, &username); err != nil {
 			return nil, false, err
 		}
+		r.CustomerName = CustomerName(r.ID, r.Member, displayName, username)
 		out = append(out, r)
 	}
 	if err = rows.Err(); err != nil {
@@ -165,16 +192,19 @@ func (s *Service) Threads(ctx context.Context, page int) ([]Thread, bool, error)
 }
 
 type Message struct {
-	ID      string    `json:"id"`
-	Sender  string    `json:"sender_type"`
-	Content string    `json:"content"`
-	At      time.Time `json:"created_at"`
+	ID           string    `json:"id"`
+	Sender       string    `json:"sender_type"`
+	Content      string    `json:"content"`
+	At           time.Time `json:"created_at"`
+	CustomerName string    `json:"customer_name,omitempty"`
 }
 
 func (s *Service) History(ctx context.Context, session, before string) ([]Message, bool, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,sender_type,content,created_at FROM public.messages WHERE session_id=$1 AND
-	   ($2='' OR (created_at,id)<(SELECT created_at,id FROM public.messages WHERE session_id=$1 AND id=nullif($2,'')::uuid))
-	   ORDER BY created_at DESC,id DESC LIMIT 61`, session, before)
+	rows, err := s.db.QueryContext(ctx, `SELECT m.id,m.sender_type,m.content,m.created_at,m.user_id IS NOT NULL,
+	   COALESCE(p.display_name,''),COALESCE(p.username,'')
+	   FROM public.messages m LEFT JOIN public.user_profiles p ON p.id=m.user_id
+	   WHERE m.session_id=$1 AND ($2='' OR (m.created_at,m.id)<(SELECT created_at,id FROM public.messages WHERE session_id=$1 AND id=nullif($2,'')::uuid))
+	   ORDER BY m.created_at DESC,m.id DESC LIMIT 61`, session, before)
 	if err != nil {
 		return nil, false, err
 	}
@@ -182,8 +212,13 @@ func (s *Service) History(ctx context.Context, session, before string) ([]Messag
 	out := []Message{}
 	for rows.Next() {
 		var m Message
-		if err = rows.Scan(&m.ID, &m.Sender, &m.Content, &m.At); err != nil {
+		var member bool
+		var displayName, username string
+		if err = rows.Scan(&m.ID, &m.Sender, &m.Content, &m.At, &member, &displayName, &username); err != nil {
 			return nil, false, err
+		}
+		if m.Sender == "user" {
+			m.CustomerName = CustomerName(session, member, displayName, username)
 		}
 		out = append(out, m)
 	}

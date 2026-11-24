@@ -14,13 +14,14 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 )
 
-// Run against a disposable platform-schema fixture with migration 008 applied.
+// Run against a disposable platform-schema fixture with the support migrations applied.
 func TestTelegramInboxRoundTrip(t *testing.T) {
 	dsn := os.Getenv("SUPPORT_TEST_DATABASE_URL")
 	if dsn == "" {
@@ -41,6 +42,9 @@ func TestTelegramInboxRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	var webhookSecret string
+	forwarded := make(chan string, 4)
+	var msgID atomic.Int64
+	msgID.Store(41)
 	token := "54321:" + strings.Repeat("example", 5)
 	rejectedToken := "43210:" + strings.Repeat("fixture", 5)
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -80,7 +84,13 @@ func TestTelegramInboxRoundTrip(t *testing.T) {
 			}
 			io.WriteString(w, `{"ok":true,"result":true}`)
 		case "sendMessage":
-			io.WriteString(w, `{"ok":true,"result":{"message_id":42}}`)
+			text, _ := call.Payload["text"].(string)
+			id := int64(40)
+			if strings.Contains(text, "\n\n") {
+				id = msgID.Add(1)
+				forwarded <- text
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": map[string]int64{"message_id": id}})
 		default:
 			t.Error("unknown Telegram method")
 		}
@@ -122,12 +132,20 @@ func TestTelegramInboxRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	session := uuid.NewString()
+	userID := uuid.NewString()
+	if _, err = admin.Exec("INSERT INTO public.user_profiles(id,username,display_name) VALUES($1,'student','小林')", userID); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Exec("DELETE FROM public.user_profiles WHERE id=$1", userID)
 	defer admin.Exec("DELETE FROM public.messages WHERE session_id=$1", session)
-	if _, err = admin.Exec("INSERT INTO public.messages(session_id,sender_type,content) VALUES($1,'user','问课程')", session); err != nil {
+	if _, err = admin.Exec("INSERT INTO public.messages(session_id,user_id,sender_type,content) VALUES($1,$2,'user','问课程')", session, userID); err != nil {
 		t.Fatal(err)
 	}
 	if ok, err := s.Deliver(ctx); !ok || err != nil {
 		t.Fatalf("delivery: %v %v", ok, err)
+	}
+	if text := <-forwarded; !strings.HasPrefix(text, "小林\n\n") {
+		t.Fatal("notification missing profile nickname")
 	}
 	if ok, err := s.Deliver(ctx); ok || err != nil {
 		t.Fatalf("duplicate: %v %v", ok, err)
@@ -141,7 +159,7 @@ func TestTelegramInboxRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	h, more, err := s.History(ctx, session, "")
-	if err != nil || more || len(h) != 3 || h[1].Content != "可以先试一节。" {
+	if err != nil || more || len(h) != 3 || h[0].CustomerName != "小林" || h[1].CustomerName != "" || h[1].Content != "可以先试一节。" {
 		t.Fatalf("wrong conversation history: %d %v", len(h), err)
 	}
 	h, _, err = s.History(ctx, session, h[1].ID)
@@ -149,8 +167,31 @@ func TestTelegramInboxRoundTrip(t *testing.T) {
 		t.Fatal("history cursor")
 	}
 	threads, _, err := s.Threads(ctx, 1)
-	if err != nil || len(threads) == 0 || threads[0].ID != session {
+	if err != nil || len(threads) == 0 || threads[0].ID != session || !threads[0].Member || threads[0].CustomerName != "小林" {
 		t.Fatal("inbox missing conversation", err)
+	}
+	if _, err = admin.Exec("UPDATE public.user_profiles SET display_name='  ' WHERE id=$1", userID); err != nil {
+		t.Fatal(err)
+	}
+	threads, _, err = s.Threads(ctx, 1)
+	if err != nil || threads[0].CustomerName != "student" {
+		t.Fatal("missing username fallback", err)
+	}
+	// A matching profile ID alone cannot identify a message sent without a user ID.
+	defer admin.Exec("DELETE FROM public.messages WHERE session_id=$1", userID)
+	if _, err = admin.Exec("INSERT INTO public.messages(session_id,sender_type,content) VALUES($1,'user','游客留言')", userID); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := s.Deliver(ctx); !ok || err != nil {
+		t.Fatal("guest delivery failed", err)
+	}
+	guestLabel := "网站访客 · " + userID[:8]
+	if text := <-forwarded; !strings.HasPrefix(text, guestLabel+"\n\n") {
+		t.Fatal("guest notification was attributed to a profile")
+	}
+	threads, _, err = s.Threads(ctx, 1)
+	if err != nil || len(threads) == 0 || threads[0].Member || threads[0].CustomerName != guestLabel {
+		t.Fatal("guest thread identity", err)
 	}
 }
 

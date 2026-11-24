@@ -134,13 +134,16 @@ func (s *Service) Deliver(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	var chat int64
-	var id, session, content string
-	err = tx.QueryRowContext(ctx, `SELECT a.chat_id,m.id,m.session_id,m.content
+	var id, session, content, displayName, username string
+	var member bool
+	err = tx.QueryRowContext(ctx, `SELECT a.chat_id,m.id,m.session_id,m.content,m.user_id IS NOT NULL,
+	  COALESCE(p.display_name,''),COALESCE(p.username,'')
 	  FROM support.telegram_bindings a JOIN public.messages m ON m.created_at>=a.bound_at AND m.sender_type='user'
+	  LEFT JOIN public.user_profiles p ON p.id=m.user_id
 	  LEFT JOIN support.telegram_deliveries d ON d.bot_id=a.bot_id AND d.chat_id=a.chat_id AND d.site_id=m.id
 	  WHERE a.bot_id=$1 AND EXISTS(SELECT 1 FROM support.telegram_bot t WHERE t.bot_id=a.bot_id)
 	  AND d.tg_message_id IS NULL AND (d.retry_at IS NULL OR d.retry_at<=now())
-	  ORDER BY m.created_at,m.id,a.chat_id LIMIT 1`, b.ID).Scan(&chat, &id, &session, &content)
+	  ORDER BY m.created_at,m.id,a.chat_id LIMIT 1`, b.ID).Scan(&chat, &id, &session, &content, &member, &displayName, &username)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -150,7 +153,8 @@ func (s *Service) Deliver(ctx context.Context) (bool, error) {
 	var result struct {
 		ID int64 `json:"message_id"`
 	}
-	sendErr := s.tg(ctx, b.Token, "sendMessage", map[string]any{"chat_id": chat, "text": "网站访客 · " + session[:8] + "\n\n" + content + "\n\n直接回复这条消息即可。"}, &result)
+	sender := CustomerName(session, member, displayName, username)
+	sendErr := s.tg(ctx, b.Token, "sendMessage", map[string]any{"chat_id": chat, "text": sender + "\n\n" + content + "\n\n直接回复这条消息即可。"}, &result)
 	if sendErr != nil || result.ID == 0 {
 		_, err = tx.ExecContext(ctx, `INSERT INTO support.telegram_deliveries(bot_id,chat_id,site_id,attempts,retry_at)
 		  VALUES($1,$2,$3,1,now()+interval '1 minute') ON CONFLICT(bot_id,chat_id,site_id) DO UPDATE SET
