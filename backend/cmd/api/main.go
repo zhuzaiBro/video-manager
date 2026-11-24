@@ -69,7 +69,7 @@ func main() {
 	r.GET("/health", handler.Health)
 	lifetime, stopSupport := context.WithCancel(context.Background())
 	defer stopSupport()
-	registerPlatform(lifetime, r, cfg, validator, videoRepo, cos)
+	registerPlatform(lifetime, r, cfg, validator, videoRepo, cos, redis)
 
 	api := r.Group("/api")
 	{

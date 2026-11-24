@@ -80,3 +80,27 @@ func segmentKey(userID, videoID, segment string) string {
 func (c *Client) TryMarkSegmentWatched(ctx context.Context, userID, videoID, segment string) (bool, error) {
 	return c.rdb.SetNX(ctx, segmentKey(userID, videoID, segment), "1", config.SegmentDurationSeconds*time.Second).Result()
 }
+
+// Each editor tab owns a short lease. One agent leaving cannot clear another's status.
+func (c *Client) SetSupportTyping(ctx context.Context, session, editor string, active bool) error {
+	key := "support:typing:" + session
+	if !active {
+		return c.rdb.ZRem(ctx, key, editor).Err()
+	}
+	const lifetime = 7 * time.Second
+	now := time.Now()
+	pipe := c.rdb.TxPipeline()
+	pipe.ZRemRangeByScore(ctx, key, "-inf", strconv.FormatInt(now.UnixMilli(), 10))
+	pipe.ZAdd(ctx, key, redis.Z{Score: float64(now.Add(lifetime).UnixMilli()), Member: editor})
+	pipe.Expire(ctx, key, lifetime)
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+func (c *Client) SupportTypingFor(ctx context.Context, session string) (int64, error) {
+	rows, err := c.rdb.ZRevRangeWithScores(ctx, "support:typing:"+session, 0, 0).Result()
+	if err != nil || len(rows) == 0 {
+		return 0, err
+	}
+	return max(int64(0), int64(rows[0].Score)-time.Now().UnixMilli()), nil
+}

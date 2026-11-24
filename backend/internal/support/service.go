@@ -27,7 +27,13 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
+type TypingCache interface {
+	SetSupportTyping(ctx context.Context, session, editor string, active bool) error
+	SupportTypingFor(ctx context.Context, session string) (int64, error)
+}
+
 type Service struct {
+	typing                       TypingCache
 	db                           *sql.DB
 	key                          []byte
 	box                          cipher.AEAD
@@ -37,7 +43,7 @@ type Service struct {
 	telegramSigner               ed25519.PrivateKey
 }
 
-func Open(dsn, keyHex, apiBase, supabaseURL, publishable, signingSeed string) (*Service, error) {
+func Open(dsn, keyHex, apiBase, supabaseURL, publishable, signingSeed string, typing TypingCache) (*Service, error) {
 	key, err := hex.DecodeString(keyHex)
 	if err != nil || len(key) != 32 {
 		return nil, errors.New("invalid support encryption key")
@@ -70,7 +76,7 @@ func Open(dsn, keyHex, apiBase, supabaseURL, publishable, signingSeed string) (*
 	}
 	db.SetMaxOpenConns(4)
 	db.SetMaxIdleConns(2)
-	s := &Service{db: db, key: key, box: box, client: &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }},
+	s := &Service{typing: typing, db: db, key: key, box: box, client: &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }},
 		apiBase: strings.TrimRight(apiBase, "/"), telegramBase: telegramBase, telegramSigner: signer, realtime: strings.TrimRight(supabaseURL, "/"), publicKey: publishable}
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
@@ -89,7 +95,25 @@ func (s *Service) mac(label string) string {
 }
 func (s *Service) Topic(session string) string { return "support-" + s.mac("broadcast/"+session) }
 func (s *Service) RTEnabled() bool             { return s.realtime != "" && s.publicKey != "" }
-func (s *Service) Notify(session string) {
+func (s *Service) Notify(session string)       { s.broadcast("changed", session, "inbox") }
+
+func (s *Service) TypingFor(ctx context.Context, session string) (int64, error) {
+	if s.typing == nil {
+		return 0, nil
+	}
+	return s.typing.SupportTypingFor(ctx, session)
+}
+func (s *Service) SetTyping(ctx context.Context, session, editor string, active bool) error {
+	if s.typing == nil {
+		return errors.New("support typing unavailable")
+	}
+	if err := s.typing.SetSupportTyping(ctx, session, editor, active); err != nil {
+		return err
+	}
+	s.broadcast("typing", session)
+	return nil
+}
+func (s *Service) broadcast(event string, targets ...string) {
 	if !s.RTEnabled() {
 		return
 	}
@@ -98,8 +122,8 @@ func (s *Service) Notify(session string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		defer cancel()
 		var events []map[string]any
-		for _, target := range []string{session, "inbox"} {
-			events = append(events, map[string]any{"topic": s.Topic(target), "event": "changed", "payload": map[string]any{}, "private": false})
+		for _, target := range targets {
+			events = append(events, map[string]any{"topic": s.Topic(target), "event": event, "payload": map[string]any{}, "private": false})
 		}
 		body, _ := json.Marshal(map[string]any{"messages": events})
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.realtime+"/realtime/v1/api/broadcast", bytes.NewReader(body))

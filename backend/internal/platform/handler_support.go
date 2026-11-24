@@ -63,8 +63,8 @@ func markChatRead(c *gin.Context, svc *support.Service, session, sender string) 
 	}
 	supportResult(c, gin.H{"ok": true}, svc.MarkRead(c.Request.Context(), session, sender, body.IDs))
 }
-func (h *Handler) registerSupport(r gin.IRoutes) {
-	r.POST("/api/platform/messages/read", h.optional(func(c *gin.Context, caller Caller) {
+func (h *Handler) supportCustomer(action func(*gin.Context, *support.Service, string)) gin.HandlerFunc {
+	return h.optional(func(c *gin.Context, caller Caller) {
 		session := c.Query("sessionId")
 		if err := h.service.checkChatSession(c.Request.Context(), caller, session, false); err != nil {
 			writeErr(c, err)
@@ -74,7 +74,29 @@ func (h *Handler) registerSupport(r gin.IRoutes) {
 			writeErr(c, NewError(503, "SUPPORT_UNAVAILABLE", "客服服务暂时不可用"))
 			return
 		}
-		markChatRead(c, h.service.support, session, "admin")
+		c.Header("Cache-Control", "private, no-store")
+		action(c, h.service.support, session)
+	})
+}
+func (h *Handler) registerSupport(r gin.IRoutes) {
+	r.POST("/api/platform/messages/read", h.supportCustomer(func(c *gin.Context, s *support.Service, session string) {
+		markChatRead(c, s, session, "admin")
+	}))
+	r.GET("/api/platform/messages/typing", h.supportCustomer(func(c *gin.Context, s *support.Service, session string) {
+		remaining, err := s.TypingFor(c.Request.Context(), session)
+		supportResult(c, gin.H{"remainingMs": remaining}, err)
+	}))
+	r.POST("/api/platform/admin/support/threads/:id/typing", h.supportAdmin(func(c *gin.Context, s *support.Service) {
+		session := c.Param("id")
+		var body struct {
+			Editor string `json:"editor"`
+			Active *bool  `json:"active"`
+		}
+		if !IsUUID(session) || c.ShouldBindJSON(&body) != nil || !IsUUID(body.Editor) || body.Active == nil {
+			writeErr(c, invalid("输入状态参数无效"))
+			return
+		}
+		supportResult(c, gin.H{"ok": true}, s.SetTyping(c.Request.Context(), session, body.Editor, *body.Active))
 	}))
 	r.POST("/api/platform/admin/support/threads/:id/read", h.supportAdmin(func(c *gin.Context, s *support.Service) {
 		markChatRead(c, s, c.Param("id"), "user")

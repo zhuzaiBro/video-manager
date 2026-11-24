@@ -28,7 +28,7 @@ func TestTelegramInboxRoundTrip(t *testing.T) {
 		t.Skip("no disposable support database")
 	}
 	ctx := context.Background()
-	s, err := Open(dsn, strings.Repeat("01", 32), "https://fixture.example.test", "", "", strings.Repeat("02", 32))
+	s, err := Open(dsn, strings.Repeat("01", 32), "https://fixture.example.test", "", "", strings.Repeat("02", 32), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

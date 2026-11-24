@@ -17,10 +17,11 @@ import (
 	"github.com/zood/video-manager/internal/platform"
 	"github.com/zood/video-manager/internal/platform/content"
 	platformpg "github.com/zood/video-manager/internal/platform/postgres"
+	redisclient "github.com/zood/video-manager/internal/redis"
 	"github.com/zood/video-manager/internal/repository"
 )
 
-func registerPlatform(lifetime context.Context, r *gin.Engine, cfg *config.Config, validator *auth.Validator, videos *repository.VideoRepository, blob platform.BlobStore) {
+func registerPlatform(lifetime context.Context, r *gin.Engine, cfg *config.Config, validator *auth.Validator, videos *repository.VideoRepository, blob platform.BlobStore, cache *redisclient.Client) {
 	if cfg.PlatformDataSource != "postgres" {
 		log.Println("warning: platform API disabled, Supabase is not used; set PLATFORM_DATA_SOURCE=postgres")
 		return
@@ -53,7 +54,7 @@ func registerPlatform(lifetime context.Context, r *gin.Engine, cfg *config.Confi
 	service.SetCatalog(catalog)
 	_ = godotenv.Load("/etc/zood/support.env")
 	if dsn := os.Getenv("SUPPORT_DATABASE_URL"); dsn != "" {
-		inbox, err := support.Open(dsn, os.Getenv("SUPPORT_ENCRYPTION_KEY"), cfg.APIBaseURL, cfg.SupabaseURL, os.Getenv("SUPABASE_PUBLISHABLE_KEY"), os.Getenv("SUPPORT_TELEGRAM_SIGNING_SEED"))
+		inbox, err := support.Open(dsn, os.Getenv("SUPPORT_ENCRYPTION_KEY"), cfg.APIBaseURL, cfg.SupabaseURL, os.Getenv("SUPABASE_PUBLISHABLE_KEY"), os.Getenv("SUPPORT_TELEGRAM_SIGNING_SEED"), cache)
 		if err != nil {
 			log.Printf("support service unavailable: %v", err)
 		} else {
