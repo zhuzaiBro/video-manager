@@ -673,25 +673,35 @@ func (s *Service) SearchQuestions(ctx context.Context, caller Caller, keyword st
 	})
 }
 
-func (s *Service) CreateMessage(ctx context.Context, caller Caller, sessionID, content, pageURL string) (map[string]any, error) {
+func (s *Service) checkChatSession(ctx context.Context, caller Caller, sessionID string, allowStaff bool) error {
 	if !IsUUID(sessionID) {
-		return nil, invalid("会话标识不合法")
+		return invalid("会话标识不合法")
 	}
 	if !caller.SignedIn() && s.support != nil {
 		ok, err := s.support.GuestAllowed(ctx, sessionID)
 		if err != nil {
-			return nil, NewError(503, "SUPPORT_UNAVAILABLE", "客服暂时不可用")
+			return NewError(503, "SUPPORT_UNAVAILABLE", "客服暂时不可用")
 		}
 		if !ok {
-			return nil, forbidden("会话身份不匹配")
+			return forbidden("会话身份不匹配")
 		}
+	}
+	if caller.SignedIn() && sessionID != caller.UserID {
+		if allowStaff {
+			return s.requireAdmin(ctx, caller)
+		}
+		return forbidden("会话身份不匹配")
+	}
+	return nil
+}
+
+func (s *Service) CreateMessage(ctx context.Context, caller Caller, sessionID, content, pageURL string) (map[string]any, error) {
+	if err := s.checkChatSession(ctx, caller, sessionID, false); err != nil {
+		return nil, err
 	}
 	content = strings.TrimSpace(content)
 	if content == "" || len([]rune(content)) > 2000 {
 		return nil, invalid("消息内容不合法")
-	}
-	if caller.SignedIn() && sessionID != caller.UserID {
-		return nil, forbidden("会话身份不匹配")
 	}
 	since := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
 	recent, err := s.many(ctx, caller, Query{
@@ -747,22 +757,8 @@ func (s *Service) CreateMessage(ctx context.Context, caller Caller, sessionID, c
 }
 
 func (s *Service) ListMessages(ctx context.Context, caller Caller, sessionID string) (Result, error) {
-	if !IsUUID(sessionID) {
-		return Result{}, invalid("会话标识不合法")
-	}
-	if !caller.SignedIn() && s.support != nil {
-		ok, err := s.support.GuestAllowed(ctx, sessionID)
-		if err != nil {
-			return Result{}, NewError(503, "SUPPORT_UNAVAILABLE", "客服暂时不可用")
-		}
-		if !ok {
-			return Result{}, forbidden("会话身份不匹配")
-		}
-	}
-	if caller.SignedIn() && sessionID != caller.UserID {
-		if err := s.requireAdmin(ctx, caller); err != nil {
-			return Result{}, err
-		}
+	if err := s.checkChatSession(ctx, caller, sessionID, true); err != nil {
+		return Result{}, err
 	}
 	result, err := s.many(ctx, caller, Query{
 		Table:   "messages",

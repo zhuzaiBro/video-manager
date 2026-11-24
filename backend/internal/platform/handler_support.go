@@ -47,7 +47,38 @@ func supportResult(c *gin.Context, data any, err error) {
 		writeErr(c, NewError(503, "SUPPORT_UNAVAILABLE", "客服服务暂时不可用"))
 	}
 }
+func markChatRead(c *gin.Context, svc *support.Service, session, sender string) {
+	var body struct {
+		IDs []string `json:"messageIds"`
+	}
+	if !IsUUID(session) || c.ShouldBindJSON(&body) != nil || len(body.IDs) == 0 || len(body.IDs) > 200 {
+		writeErr(c, invalid("已读消息参数无效"))
+		return
+	}
+	for _, id := range body.IDs {
+		if !IsUUID(id) {
+			writeErr(c, invalid("已读消息参数无效"))
+			return
+		}
+	}
+	supportResult(c, gin.H{"ok": true}, svc.MarkRead(c.Request.Context(), session, sender, body.IDs))
+}
 func (h *Handler) registerSupport(r gin.IRoutes) {
+	r.POST("/api/platform/messages/read", h.optional(func(c *gin.Context, caller Caller) {
+		session := c.Query("sessionId")
+		if err := h.service.checkChatSession(c.Request.Context(), caller, session, false); err != nil {
+			writeErr(c, err)
+			return
+		}
+		if h.service.support == nil {
+			writeErr(c, NewError(503, "SUPPORT_UNAVAILABLE", "客服服务暂时不可用"))
+			return
+		}
+		markChatRead(c, h.service.support, session, "admin")
+	}))
+	r.POST("/api/platform/admin/support/threads/:id/read", h.supportAdmin(func(c *gin.Context, s *support.Service) {
+		markChatRead(c, s, c.Param("id"), "user")
+	}))
 	r.GET("/api/platform/admin/support/threads", h.supportAdmin(func(c *gin.Context, s *support.Service) {
 		page, _ := strconv.Atoi(c.Query("page"))
 		if page < 1 {

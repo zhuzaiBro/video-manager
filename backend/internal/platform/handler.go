@@ -238,8 +238,22 @@ func (h *Handler) removeFavorite(c *gin.Context, caller Caller) {
 func (h *Handler) listMessages(c *gin.Context, caller Caller) {
 	result, err := h.service.ListMessages(c.Request.Context(), caller, c.Query("sessionId"))
 	data := gin.H{"messages": result.Rows}
-	if err == nil && h.service.support != nil && h.service.support.RTEnabled() {
-		data["topic"] = h.service.support.Topic(c.Query("sessionId"))
+	if svc := h.service.support; err == nil && svc != nil {
+		session := c.Query("sessionId")
+		ids := make([]string, 0, len(result.Rows))
+		for _, row := range result.Rows {
+			ids = append(ids, stringField(row, "id"))
+		}
+		seen, unread, receiptErr := svc.ReadState(c.Request.Context(), session, ids)
+		if receiptErr == nil {
+			data["unreadReplies"] = unread
+			for _, row := range result.Rows {
+				row["read"] = seen[stringField(row, "id")]
+			}
+		}
+		if svc.RTEnabled() {
+			data["topic"] = svc.Topic(session)
+		}
 	}
 	c.Header("Cache-Control", "private, no-store")
 	writeResult(c, data, err)

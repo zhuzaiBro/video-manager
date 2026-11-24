@@ -55,12 +55,15 @@ func (h *Handler) telegramWebhook(c *gin.Context) {
 		return
 	}
 	if h.service.support != nil && (h.service.webhookSecret == "" || h.service.support.HasBot(c.Request.Context())) {
-		err = h.service.support.Webhook(c.Request.Context(), c.GetHeader("X-Telegram-Bot-Api-Secret-Token"), body)
+		answer, err := h.service.support.Webhook(c.Request.Context(), c.GetHeader("X-Telegram-Bot-Api-Secret-Token"), body)
 		if errors.Is(err, support.ErrWebhook) {
 			writeErr(c, unauthorized("Unauthorized"))
 			return
 		}
-		supportResult(c, gin.H{"ok": true}, err)
+		if answer == nil {
+			answer = gin.H{"ok": true}
+		}
+		supportResult(c, answer, err)
 		return
 	}
 	status, payload, err := h.service.HandleTelegram(c.Request.Context(), c.GetHeader("X-Telegram-Bot-Api-Secret-Token"), body)

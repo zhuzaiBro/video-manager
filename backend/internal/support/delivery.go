@@ -15,39 +15,92 @@ import (
 
 var ErrWebhook = errors.New("unverified webhook")
 
+type telegramChat struct {
+	ID   int64  `json:"id"`
+	Type string `json:"type"`
+}
+type telegramUser struct {
+	ID int64 `json:"id"`
+}
+type callback struct {
+	ID      string       `json:"id"`
+	Data    string       `json:"data"`
+	From    telegramUser `json:"from"`
+	Message struct {
+		ID   int64        `json:"message_id"`
+		Chat telegramChat `json:"chat"`
+	} `json:"message"`
+}
+
 type update struct {
-	ID      int64 `json:"update_id"`
-	Message *struct {
-		ID   int64  `json:"message_id"`
-		Text string `json:"text"`
-		Chat struct {
-			ID   int64  `json:"id"`
-			Type string `json:"type"`
-		} `json:"chat"`
-		From struct {
-			ID int64 `json:"id"`
-		} `json:"from"`
+	Callback *callback `json:"callback_query"`
+	ID       int64     `json:"update_id"`
+	Message  *struct {
+		ID    int64        `json:"message_id"`
+		Text  string       `json:"text"`
+		Chat  telegramChat `json:"chat"`
+		From  telegramUser `json:"from"`
 		Reply *struct {
 			ID int64 `json:"message_id"`
 		} `json:"reply_to_message"`
 	} `json:"message"`
 }
 
-func (s *Service) Webhook(ctx context.Context, secret string, raw []byte) error {
+// A callback is answered in the webhook HTTP response, as supported by the Telegram Bot API.
+func (s *Service) Webhook(ctx context.Context, secret string, raw []byte) (map[string]any, error) {
 	b, err := s.bot(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ErrWebhook
+		return nil, ErrWebhook
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !hmac.Equal([]byte(s.mac(fmt.Sprintf("telegram/%d", b.ID))), []byte(secret)) {
-		return ErrWebhook
+		return nil, ErrWebhook
 	}
 	var u update
-	if json.Unmarshal(raw, &u) != nil || u.Message == nil || u.ID <= 0 {
-		return nil
+	if json.Unmarshal(raw, &u) != nil || u.ID <= 0 {
+		return nil, nil
 	}
+	if q := u.Callback; q != nil {
+		if q.Data != "support_read" || q.ID == "" || q.Message.Chat.Type != "private" || q.From.ID != q.Message.Chat.ID {
+			return nil, nil
+		}
+		answer := map[string]any{"method": "answerCallbackQuery", "callback_query_id": q.ID}
+		session, target, err := deliveryTarget(ctx, s.db, b.ID, q.From.ID, q.Message.ID)
+		if errors.Is(err, sql.ErrNoRows) {
+			answer["text"] = "这条消息没有关联当前客服会话"
+			return answer, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if err = s.MarkRead(ctx, session, "user", []string{target}); err != nil {
+			return nil, err
+		}
+		answer["text"] = "已标为已读"
+		return answer, nil
+	}
+	if u.Message == nil {
+		return nil, nil
+	}
+	return nil, s.handleMessage(ctx, b, u)
+}
+
+type rowQuerier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func deliveryTarget(ctx context.Context, db rowQuerier, botID, chatID, messageID int64) (string, string, error) {
+	var session, target string
+	err := db.QueryRowContext(ctx, `SELECT m.session_id,m.id FROM support.telegram_deliveries d
+		JOIN public.messages m ON m.id=d.site_id AND m.sender_type='user'
+		JOIN support.telegram_bindings a ON a.bot_id=d.bot_id AND a.chat_id=d.chat_id AND a.user_id=d.chat_id
+		JOIN support.telegram_bot b ON b.bot_id=d.bot_id AND b.singleton
+		WHERE d.bot_id=$1 AND d.chat_id=$2 AND d.tg_message_id=$3`, botID, chatID, messageID).Scan(&session, &target)
+	return session, target, err
+}
+func (s *Service) handleMessage(ctx context.Context, b bot, u update) error {
 	m := u.Message
 	if m.Chat.Type != "private" || m.From.ID != m.Chat.ID {
 		return nil
@@ -96,16 +149,17 @@ func (s *Service) Webhook(ctx context.Context, secret string, raw []byte) error 
 	if len(runes) > 2000 {
 		text = string(runes[:2000])
 	}
-	var session string
-	err = tx.QueryRowContext(ctx, `INSERT INTO public.messages(session_id,sender_type,content)
-	   SELECT m.session_id,'admin',$5 FROM support.telegram_deliveries d JOIN public.messages m ON m.id=d.site_id
-	   JOIN support.telegram_bindings a ON a.bot_id=d.bot_id AND a.chat_id=d.chat_id
-	   WHERE d.bot_id=$1 AND d.chat_id=$2 AND d.tg_message_id=$3 AND a.user_id=$4 RETURNING session_id`,
-		b.ID, m.Chat.ID, m.Reply.ID, m.From.ID, text).Scan(&session)
+	session, target, err := deliveryTarget(ctx, tx, b.ID, m.Chat.ID, m.Reply.ID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return tx.Commit()
 	}
 	if err != nil {
+		return err
+	}
+	if _, err = recordRead(ctx, tx, session, "user", []string{target}); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO public.messages(session_id,sender_type,content) VALUES($1,'admin',$2)`, session, text); err != nil {
 		return err
 	}
 	if err = tx.Commit(); err == nil {
@@ -154,7 +208,10 @@ func (s *Service) Deliver(ctx context.Context) (bool, error) {
 		ID int64 `json:"message_id"`
 	}
 	sender := CustomerName(session, member, displayName, username)
-	sendErr := s.tg(ctx, b.Token, "sendMessage", map[string]any{"chat_id": chat, "text": sender + "\n\n" + content + "\n\n直接回复这条消息即可。"}, &result)
+	sendErr := s.tg(ctx, b.Token, "sendMessage", map[string]any{
+		"chat_id": chat, "text": sender + "\n\n" + content + "\n\n直接回复这条消息即可。",
+		"reply_markup": map[string]any{"inline_keyboard": [][]map[string]string{{{"text": "标为已读", "callback_data": "support_read"}}}},
+	}, &result)
 	if sendErr != nil || result.ID == 0 {
 		_, err = tx.ExecContext(ctx, `INSERT INTO support.telegram_deliveries(bot_id,chat_id,site_id,attempts,retry_at)
 		  VALUES($1,$2,$3,1,now()+interval '1 minute') ON CONFLICT(bot_id,chat_id,site_id) DO UPDATE SET
@@ -173,11 +230,21 @@ func (s *Service) Run(ctx context.Context) {
 	defer s.db.Close()
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+	var nextRegistration time.Time
+	registered := false
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if !registered && !time.Now().Before(nextRegistration) {
+				err := s.refreshSavedWebhook(ctx)
+				registered = err == nil || errors.Is(err, sql.ErrNoRows)
+				nextRegistration = time.Now().Add(5 * time.Minute)
+				if err == nil {
+					log.Print("Support Telegram read callbacks enabled")
+				}
+			}
 			for count := 0; count < 15; count++ {
 				worked, err := s.Deliver(ctx)
 				if err != nil {

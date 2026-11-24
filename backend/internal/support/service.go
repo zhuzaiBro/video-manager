@@ -197,12 +197,14 @@ type Message struct {
 	Content      string    `json:"content"`
 	At           time.Time `json:"created_at"`
 	CustomerName string    `json:"customer_name,omitempty"`
+	Read         bool      `json:"read"`
 }
 
 func (s *Service) History(ctx context.Context, session, before string) ([]Message, bool, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT m.id,m.sender_type,m.content,m.created_at,m.user_id IS NOT NULL,
-	   COALESCE(p.display_name,''),COALESCE(p.username,'')
+	   COALESCE(p.display_name,''),COALESCE(p.username,''),r.message_id IS NOT NULL
 	   FROM public.messages m LEFT JOIN public.user_profiles p ON p.id=m.user_id
+	   LEFT JOIN support.message_reads r ON r.message_id=m.id
 	   WHERE m.session_id=$1 AND ($2='' OR (m.created_at,m.id)<(SELECT created_at,id FROM public.messages WHERE session_id=$1 AND id=nullif($2,'')::uuid))
 	   ORDER BY m.created_at DESC,m.id DESC LIMIT 61`, session, before)
 	if err != nil {
@@ -214,7 +216,7 @@ func (s *Service) History(ctx context.Context, session, before string) ([]Messag
 		var m Message
 		var member bool
 		var displayName, username string
-		if err = rows.Scan(&m.ID, &m.Sender, &m.Content, &m.At, &member, &displayName, &username); err != nil {
+		if err = rows.Scan(&m.ID, &m.Sender, &m.Content, &m.At, &member, &displayName, &username, &m.Read); err != nil {
 			return nil, false, err
 		}
 		if m.Sender == "user" {
@@ -254,9 +256,12 @@ type bot struct {
 }
 
 func (s *Service) bot(ctx context.Context) (bot, error) {
+	return s.botUsing(ctx, s.db)
+}
+func (s *Service) botUsing(ctx context.Context, db rowQuerier) (bot, error) {
 	var b bot
 	var sealed []byte
-	err := s.db.QueryRowContext(ctx, "SELECT bot_id,username,encrypted_token FROM support.telegram_bot WHERE singleton").Scan(&b.ID, &b.Username, &sealed)
+	err := db.QueryRowContext(ctx, "SELECT bot_id,username,encrypted_token FROM support.telegram_bot WHERE singleton").Scan(&b.ID, &b.Username, &sealed)
 	if err != nil {
 		return b, err
 	}
@@ -395,16 +400,44 @@ func (s *Service) Configure(ctx context.Context, token string) error {
 	  bind_hash=NULL,bind_expires=NULL`, identity.ID, identity.Username, sealed); err != nil {
 		return err
 	}
+	if err = s.registerWebhook(ctx, token, identity.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+func (s *Service) registerWebhook(ctx context.Context, token string, botID int64) error {
 	var registered bool
-	err = s.tg(ctx, token, "setWebhook", map[string]any{"url": s.apiBase + "/api/platform/telegram/webhook", "secret_token": s.mac(fmt.Sprintf("telegram/%d", identity.ID)), "allowed_updates": []string{"message"}, "drop_pending_updates": false}, &registered)
+	err := s.tg(ctx, token, "setWebhook", map[string]any{"url": s.apiBase + "/api/platform/telegram/webhook", "secret_token": s.mac(fmt.Sprintf("telegram/%d", botID)),
+		"allowed_updates": []string{"message", "callback_query"}, "drop_pending_updates": false}, &registered)
 	if err != nil {
 		return err
 	}
 	if !registered {
 		return ErrTelegramWebhook
 	}
+	return nil
+}
+
+// Reuse the current binding when enabling callbacks for an already configured bot.
+func (s *Service) refreshSavedWebhook(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext('support.bot.configure'))"); err != nil {
+		return err
+	}
+	b, err := s.botUsing(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if err = s.registerWebhook(ctx, b.Token, b.ID); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
+
 func (s *Service) Binding(ctx context.Context) (string, error) {
 	var buf [24]byte
 	if _, err := rand.Read(buf[:]); err != nil {
